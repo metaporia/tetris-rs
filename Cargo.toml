@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.13.*", features = ["wayland"] }
+bevy = { version = "0.13.*", features = ["wayland", "dynamic_linking"] }
 
 bevy_prototype_lyon = "0.11"
 bevy_rapier2d = { version = "0.26.*", features = [ "debug-render-2d" ] }
@@ -12,5 +12,7 @@ bevy_rapier2d = { version = "0.26.*", features = [ "debug-render-2d" ] }
 [profile.dev.package."*"]
 opt-level = 3
 
-[profile.dev]
-opt-level = 1
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

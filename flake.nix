@@ -37,6 +37,10 @@
             libxkbcommon
             wayland # To use the wayland feature
 
+            # for dynamic linking
+            clang
+            lld
+
           ];
 
           # drop into fish shell for development

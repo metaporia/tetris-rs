@@ -8,24 +8,30 @@ const BRICK_DIM: f32 = 30.0;
 const PIXELS_PER_METER: f32 = 100.0;
 const OUTLINE_THICKNESS: f32 = 3.0;
 
-//title: "Rusty Not Tetris".to_string(),
-//resolution: (BRICK_DIM * 12.0, BRICK_DIM * 19.0).into(),
-//..Default::default()
-
 fn main() {
     App::new()
-        .add_systems(Update, hello_world)
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(
+        WindowPlugin {
+            primary_window: Some(Window {
+                title: "Not Tetris".into(),
+                name: Some("tetris-rs".into()),
+                resolution: (BRICK_DIM * 12.0, BRICK_DIM * 19.0).into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }))
+        // Physics plugins
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(
             PIXELS_PER_METER,
         ))
         .add_plugins(RapierDebugRenderPlugin::default())
         .add_plugins(ShapePlugin)
+        // my plugins
         .add_systems(Startup, setup_graphics)
+        .add_systems(Update, hello_world)
         //        .add_systems(Startup, setup_physics)
         .run();
 }
-
 
 fn setup_graphics(mut commands: Commands) {
     // Add a camera so we can see the debug-render.
