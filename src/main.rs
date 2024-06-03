@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, window::WindowResolution};
 use bevy_prototype_lyon::prelude::*;
 use bevy_rapier2d::prelude::*;
 
@@ -7,18 +7,24 @@ const BRICK_DIM: f32 = 30.0;
 const PIXELS_PER_METER: f32 = 100.0;
 const OUTLINE_THICKNESS: f32 = 3.0;
 
+const IMPULSE_SCALAR: f32 = 10000.0;
+
 fn main() {
     App::new()
         .add_event::<HitGround>()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Not Tetris".into(),
-                name: Some("tetris-rs".into()),
-                resolution: (BRICK_DIM * 19.0, BRICK_DIM * 12.0).into(),
+        .add_plugins(
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Not Tetris".into(),
+                    name: Some("tetris-rs".into()),
+                    // FIXME: fix ground alignment
+                    resolution: WindowResolution::new(BRICK_DIM * 9.0, BRICK_DIM * 13.0)
+                        .with_scale_factor_override(1.0),
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
-            ..Default::default()
-        }))
+        )
         // Physics plugins
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(
             PIXELS_PER_METER,
@@ -31,7 +37,7 @@ fn main() {
         .add_systems(Startup, spawn_arena)
         .add_systems(Startup, spawn_lblock)
         // TODO Update or FixedUpdate?
-        .add_systems(Update, move_block)
+        .add_systems(Update, rotate_block)
         .run();
 }
 
@@ -111,7 +117,10 @@ fn spawn_lblock(mut commands: Commands) {
         .insert(ActiveEvents::COLLISION_EVENTS)
         .insert(LBlock)
         .insert(ActiveTetroid)
-        .insert(Velocity::zero())
+        .insert(Velocity {
+            linvel: Vec2::new(0.0, -120.0),
+            angvel: 0.0,
+        })
         .insert(GravityScale(0.02))
         .log_components();
 }
@@ -197,16 +206,15 @@ fn move_block(
     mut impulses: Query<&mut ExternalImpulse, With<LBlock>>,
 ) {
     for mut imp in impulses.iter_mut() {
-
+        // NOTE: impulse numbers need to be high due to reduced gravity I guess
         if kbd_input.pressed(KeyCode::ArrowRight) {
             println!("right");
-            imp.impulse = Vec2::new(10000.0, 0.0)
+            imp.impulse = Vec2::new(IMPULSE_SCALAR, 0.0)
         }
 
         if kbd_input.pressed(KeyCode::ArrowLeft) {
-            imp.impulse = Vec2::new(-10000.0, 0.0)
+            imp.impulse = Vec2::new(-IMPULSE_SCALAR, 0.0)
         }
-
     }
 }
 
@@ -215,7 +223,7 @@ fn rotate_block2(
     mut ext_impulses: Query<&mut ExternalImpulse, With<LBlock>>,
 ) {
     let mut impulse = 0.0;
-    let imp = 0.5;
+    let imp = 0.5 * IMPULSE_SCALAR;
     if kbd_input.pressed(KeyCode::KeyZ) {
         impulse = imp;
     } else if kbd_input.pressed(KeyCode::KeyX) {
@@ -223,7 +231,7 @@ fn rotate_block2(
     }
 
     let mut lateral_impulse = 0.00;
-    let lateral_imp = 0.05;
+    let lateral_imp = 0.05 * IMPULSE_SCALAR;
     if kbd_input.pressed(KeyCode::ArrowLeft) {
         lateral_impulse = -lateral_imp;
     }
@@ -251,15 +259,11 @@ fn rotate_block(
     active_tetroid_query: Query<Entity, With<ActiveTetroid>>,
 ) {
     let active_tetroid = active_tetroid_query.single();
-    match hit_ground_events
-        .read()
-        .filter(|hg| hg.0 == active_tetroid)
-        .next()
-    {
+    match hit_ground_events.read().find(|hg| hg.0 == active_tetroid) {
         Some(_) => {}
         _ => {
             let mut impulse = 0.0;
-            let imp = 0.05;
+            let imp = 0.05 * IMPULSE_SCALAR;
             if kbd_input.pressed(KeyCode::KeyZ) {
                 impulse = imp;
             } else if kbd_input.pressed(KeyCode::KeyX) {
@@ -267,7 +271,7 @@ fn rotate_block(
             }
 
             let mut lateral_impulse = 0.00;
-            let lateral_imp = 5.0;
+            let lateral_imp = 5.0 * IMPULSE_SCALAR;
             if kbd_input.pressed(KeyCode::ArrowLeft) {
                 lateral_impulse = -lateral_imp;
             }
