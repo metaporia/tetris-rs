@@ -16,24 +16,31 @@
         };
       in
       {
-        devShells.default = with pkgs; mkShell {
+        devShells.default = with pkgs; mkShell rec {
+          LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
           buildInputs = [
             openssl
             pkg-config
             rust-bin.beta.latest.default
 
+            # dev tools
+            rust-analyzer
+
             # bevy deps
             udev
-            wayland
-            alsaLib
-            libxkbcommon
+            alsa-lib
             vulkan-loader
+            xorg.libX11
+            xorg.libXcursor
+            xorg.libXi
+            xorg.libXrandr # To use the x11 feature
+            libxkbcommon
+            wayland # To use the wayland feature
 
           ];
 
           # drop into fish shell for development
           shellHook = ''
-            fish
           '';
         };
       }
