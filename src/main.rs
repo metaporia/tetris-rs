@@ -18,8 +18,11 @@ fn main() {
                     title: "Not Tetris".into(),
                     name: Some("tetris-rs".into()),
                     // FIXME: fix ground alignment
-                    resolution: WindowResolution::new(BRICK_DIM * 9.0, BRICK_DIM * 13.0)
-                        .with_scale_factor_override(1.0),
+                    resolution: WindowResolution::new(
+                        BRICK_DIM * 9.0,
+                        BRICK_DIM * 13.0,
+                    )
+                    .with_scale_factor_override(1.0),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -38,6 +41,10 @@ fn main() {
         .add_systems(Startup, spawn_lblock)
         // TODO Update or FixedUpdate?
         .add_systems(Update, rotate_block)
+        // test collider
+        .add_systems(Update, freeze_on_ground_contact)
+        .add_systems(Startup, test_collider_setup)
+        .add_systems(Update, test_collider)
         .run();
 }
 
@@ -201,7 +208,7 @@ fn spawn_arena(mut commands: Commands) {
         )));
 }
 
-fn move_block(
+fn _move_block(
     kbd_input: Res<ButtonInput<KeyCode>>,
     mut impulses: Query<&mut ExternalImpulse, With<LBlock>>,
 ) {
@@ -218,7 +225,7 @@ fn move_block(
     }
 }
 
-fn rotate_block2(
+fn _rotate_block2(
     kbd_input: Res<ButtonInput<KeyCode>>,
     mut ext_impulses: Query<&mut ExternalImpulse, With<LBlock>>,
 ) {
@@ -258,38 +265,198 @@ fn rotate_block(
     mut hit_ground_events: EventReader<HitGround>,
     active_tetroid_query: Query<Entity, With<ActiveTetroid>>,
 ) {
-    let active_tetroid = active_tetroid_query.single();
-    match hit_ground_events.read().find(|hg| hg.0 == active_tetroid) {
-        Some(_) => {}
-        _ => {
-            let mut impulse = 0.0;
-            let imp = 0.05 * IMPULSE_SCALAR;
-            if kbd_input.pressed(KeyCode::KeyZ) {
-                impulse = imp;
-            } else if kbd_input.pressed(KeyCode::KeyX) {
-                impulse = -imp;
+    let active_tetroid = active_tetroid_query.get_single();
+    match active_tetroid {
+        Err(_) => {}
+        Ok(at) => match hit_ground_events.read().find(|hg| hg.0 == at) {
+            Some(_) => {}
+            _ => {
+                let mut impulse = 0.0;
+                let imp = 5.0 * IMPULSE_SCALAR;
+                if kbd_input.pressed(KeyCode::KeyZ) {
+                    impulse = imp;
+                } else if kbd_input.pressed(KeyCode::KeyX) {
+                    impulse = -imp;
+                }
+
+                let mut lateral_impulse = 0.00;
+                let lateral_imp = 5.0 * IMPULSE_SCALAR;
+                if kbd_input.pressed(KeyCode::ArrowLeft) {
+                    lateral_impulse = -lateral_imp;
+                }
+                if kbd_input.pressed(KeyCode::ArrowRight) {
+                    lateral_impulse = lateral_imp;
+                }
+                for mut ext_impulse in ext_impulses.iter_mut() {
+                    //println!(
+                    //    "impulse: {}, lateral_impulse: {}",
+                    //    &impulse, &lateral_impulse
+                    //);
+                    //println!(
+                    //    "torque: {}, lateral: {}",
+                    //    &ext_impulse.torque_impulse, &ext_impulse.impulse
+                    //);
+                    ext_impulse.torque_impulse = impulse;
+                    ext_impulse.impulse = Vec2::new(lateral_impulse, 0.0);
+                }
+            }
+        },
+    }
+}
+
+/// On ground contact remove all velocity & gravity for ActiveTetroid, remove ActiveTetroid from entity
+///
+/// Event order is:
+/// HitGround -> UpdateDensity -> Slice -> UnfreezeDebris
+fn freeze_on_ground_contact(
+    mut commands: Commands,
+    mut event_writer: EventWriter<HitGround>,
+    mut collision_events: EventReader<CollisionEvent>,
+    mut ground_query: Query<Entity, (With<Collider>, With<Ground>)>,
+    mut active_tetroid_query: Query<
+        (Entity, &mut Velocity, &mut GravityScale),
+        (With<Collider>, With<ActiveTetroid>),
+    >,
+) {
+    match active_tetroid_query.get_single_mut() {
+        Err(_) => {}
+        Ok((at, mut vel, mut gs)) => {
+            let g = ground_query.single_mut();
+
+            for ce in collision_events.read() {
+                if let CollisionEvent::Started(e1, e2, _) = ce {
+                    // active tetroid has hit ground
+                    if (*e1 == at && *e2 == g) || (*e2 == at && *e1 == g) {
+                        // 1. freeze block on collision
+                        vel.linvel = Vect::ZERO;
+                        vel.angvel = 0.0;
+                        gs.0 = 0.0;
+
+                        event_writer.send(HitGround(at));
+                        // remove ActiveTetroid component from just-collided entity
+                        commands.entity(at).remove::<ActiveTetroid>();
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn test_collider_setup(mut commands: Commands) {
+    // create collider sensor on first row to slice brick once it hits the
+    // bottom
+    commands
+        .spawn(Collider::cuboid(BRICK_DIM * 5.0, BRICK_DIM / 2.0))
+        .insert(Sensor)
+        .insert(TransformBundle::from(Transform::from_xyz(
+            0.0,
+            -BRICK_DIM * (18.0 / 2.0) + BRICK_DIM,
+            0.0,
+        )));
+}
+
+fn test_collider(
+    mut commands: Commands,
+    mut collision_events: EventReader<CollisionEvent>,
+    mut tetroid_query: Query<
+        (
+            Entity,
+            &mut Transform,
+            &mut Collider,
+            &mut Velocity,
+            &mut GravityScale,
+        ),
+        With<ActiveTetroid>,
+    >,
+    rapier_context: Res<RapierContext>,
+) {
+    // for this demo, the block freezes when it hits the lowest row
+    // then the ray is sent from the top of the second lowest to find the
+    // points of intersection
+    //
+    // cast ray to calculate intersection points
+    let ray_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -6.5);
+    let ray_dir = Vec2::new(-1.0, 0.0);
+    let max_toi = 200.0;
+
+    let mut ray_destination = ray_origin;
+    ray_destination.x *= -1.0;
+
+    // let's try shape intersection
+
+    for ce in collision_events.read() {
+        if let CollisionEvent::Started(e0, e1, flags) = ce {
+            // determine which is activeblock
+            let (entity, transform, collider, mut velocity, mut gravity_scale) =
+                tetroid_query.single_mut();
+            println!(
+                "id: {}, e0.translation: {}, e0.rotation: {}",
+                entity.index(),
+                transform.translation,
+                transform.rotation
+            );
+
+            for pair_view in rapier_context.contact_pairs_with(entity) {
+                println!(
+                    "{:?} hits {:?}",
+                    pair_view.collider1(),
+                    pair_view.collider2()
+                );
             }
 
-            let mut lateral_impulse = 0.00;
-            let lateral_imp = 5.0 * IMPULSE_SCALAR;
-            if kbd_input.pressed(KeyCode::ArrowLeft) {
-                lateral_impulse = -lateral_imp;
-            }
-            if kbd_input.pressed(KeyCode::ArrowRight) {
-                lateral_impulse = lateral_imp;
-            }
-            for mut ext_impulse in ext_impulses.iter_mut() {
-                println!(
-                    "impulse: {}, lateral_impulse: {}",
-                    &impulse, &lateral_impulse
-                );
-                println!(
-                    "torque: {}, lateral: {}",
-                    &ext_impulse.torque_impulse, &ext_impulse.impulse
-                );
-                ext_impulse.torque_impulse = impulse;
-                ext_impulse.impulse = Vec2::new(lateral_impulse, 0.0);
-            }
+            let callback = |hit_entity, ray_intersection: RayIntersection| {
+                //println!(
+                //    "hit ent {:?} at point {:?}",
+                //    hit_entity, ray_intersection.point
+                //);
+                // TODO spawn line/rectangle
+
+                // draw small circle at each intersection
+                let contac_point = shapes::Circle {
+                    radius: 2.0,
+                    center: ray_intersection.point,
+                };
+                let ray_shape =
+                    shapes::Line(ray_intersection.point, ray_destination);
+                commands
+                    .spawn((
+                        ShapeBundle {
+                            path: GeometryBuilder::build_as(&contac_point),
+                            ..default()
+                        },
+                        Stroke::new(Color::RED, 1.0),
+                    )
+                    );
+                true
+            };
+
+            rapier_context.intersections_with_ray(
+                ray_origin,
+                ray_dir,
+                max_toi,
+                false, // solid?
+                QueryFilter::only_dynamic(),
+                callback,
+            );
+
+            //if let Some(pair_view) = rapier_context.contact_pair(*e0, *e1) {
+            //    pair_view
+            //        .manifolds()
+            //        .for_each(|m| {
+            //            m.rigid_body1().map(|e| println!("local_p1 ent id: {:?}", e));
+            //            m.rigid_body2().map(|e| println!("local_p2 ent id: {:?}", e));
+            //            m.points().for_each(|p| println!("point: {}", p.local_p1()))
+            //        });
+            //}
+
+            // 1. freeze block on collision
+            //velocity.linvel = Vect::ZERO;
+            //velocity.angvel = 0.0;
+            //gravity_scale.0 = 0.0;
+            // 2. slice and dice
+            // 3. convert from ActiveTetroid to TetroidDebris (which should
+            //    be a side effect of despawning the entity and spawning
+            //    the calculated fragments
         }
     }
 }
