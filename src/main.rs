@@ -1,6 +1,10 @@
-use bevy::{prelude::*, window::WindowResolution};
+#![allow(unused, clippy::type_complexity)]
+use bevy::{prelude::*, transform, window::WindowResolution};
 use bevy_prototype_lyon::prelude::*;
-use bevy_rapier2d::prelude::*;
+use bevy_rapier2d::{
+    parry::query::details::contact_manifolds_trimesh_shape_shapes, prelude::*,
+    rapier::geometry::ActiveCollisionTypes,
+};
 
 // width/height of single square
 const BRICK_DIM: f32 = 30.0;
@@ -40,11 +44,14 @@ fn main() {
         .add_systems(Startup, spawn_arena)
         .add_systems(Startup, spawn_lblock)
         // TODO Update or FixedUpdate?
-        .add_systems(Update, rotate_block)
+        .add_systems(Update, kbd_input)
         // test collider
         .add_systems(Update, freeze_on_ground_contact)
-        .add_systems(Startup, test_collider_setup)
-        .add_systems(Update, test_collider)
+        //.add_systems(Startup, test_collider_setup_sensor)
+        //.add_systems(Update, test_collider_ray_cast)
+        .add_systems(Startup, row_density_solver_setup)
+        .add_systems(Update, row_collisions)
+        //.add_systems(Update, test_collider_ray_cast)
         .run();
 }
 
@@ -259,7 +266,7 @@ fn _rotate_block2(
     }
 }
 
-fn rotate_block(
+fn kbd_input(
     kbd_input: Res<ButtonInput<KeyCode>>,
     mut ext_impulses: Query<&mut ExternalImpulse, With<ActiveTetroid>>,
     mut hit_ground_events: EventReader<HitGround>,
@@ -334,7 +341,7 @@ fn freeze_on_ground_contact(
 
                         event_writer.send(HitGround(at));
                         // remove ActiveTetroid component from just-collided entity
-                        commands.entity(at).remove::<ActiveTetroid>();
+                        //commands.entity(at).remove::<ActiveTetroid>();
                     }
                 }
             }
@@ -342,12 +349,18 @@ fn freeze_on_ground_contact(
     }
 }
 
-fn test_collider_setup(mut commands: Commands) {
-    // create collider sensor on first row to slice brick once it hits the
-    // bottom
-    commands
-        .spawn(Collider::cuboid(BRICK_DIM * 5.0, BRICK_DIM / 2.0))
-        .insert(Sensor)
+#[derive(Component)]
+struct Row;
+
+// Triggered by HitGround in order to visually confirm collision results
+// need to add solver group that ensures RowSensors cannot collide with any tetroids
+fn row_density_solver_setup(mut cmds: Commands) {
+    // add collider
+    cmds.spawn(Collider::cuboid(BRICK_DIM * 5.0, BRICK_DIM / 2.0))
+        .insert(ActiveEvents::COLLISION_EVENTS)
+        .insert(SolverGroups::new(Group::GROUP_1, Group::NONE))
+        .insert(RigidBody::Fixed)
+        .insert(Row)
         .insert(TransformBundle::from(Transform::from_xyz(
             0.0,
             -BRICK_DIM * (18.0 / 2.0) + BRICK_DIM,
@@ -355,9 +368,134 @@ fn test_collider_setup(mut commands: Commands) {
         )));
 }
 
-fn test_collider(
+fn row_collisions(
+    mut cmds: Commands,
+    transform_query: Query<&GlobalTransform>,
+    rapier_context: Res<RapierContext>,
+    mut collisions: EventReader<CollisionEvent>,
+    row_query: Query<Entity, With<Row>>,
+    active_tetroid_query: Query<Entity, With<ActiveTetroid>>,
+) {
+    // for c in collisions.read() {
+    //     if let CollisionEvent::Started(e1, e2, _) = c {
+    //         println!("collision event: {:?}", c);
+    //     }
+    // }
+
+    if let Ok(at) = active_tetroid_query.get_single() {
+        if let Ok(row) = row_query.get_single() {
+            for c in collisions.read() {
+                // FIXME: i think we can just query the collision with contact pair, no?
+                if let CollisionEvent::Stopped(e1, e2, _) = c {
+                    if (*e1 == row || *e2 == row) {
+                        if let Some(contact_pair) =
+                          // can use ConttackPa
+                            rapier_context.contact_pair(*e1, *e2)
+                        {
+                            // Make sure that the collider's transform is used
+                            // to transform the contact point from local space.
+                            // TODO may not be necessary
+                            let row_collider =
+                                if contact_pair.collider1() == row {
+                                    contact_pair.collider1()
+                                } else {
+                                    contact_pair.collider2()
+                                };
+                            for manifold in contact_pair.manifolds() {
+                                //if let Ok(transform) =
+                                //    transform_query.get(row_collider)
+                                //{
+                                //    if (*e2 == row) { println!("e2 is row");}
+                                //    let row_local_n =
+                                //        if contact_pair.collider1() == row {
+                                //            manifold.local_n1()
+                                //        } else {
+                                //            manifold.local_n2()
+                                //        };
+                                //    // convert row_local_n to global space
+                                //    println!("contact normal 2: {:?}", manifold.local_n2());
+                                //    let gcp = transform
+                                //        .transform_point(Vec3::new(
+                                //            manifold.local_n2().x,
+                                //            manifold.local_n2().y,
+                                //            0.0,
+                                //        ));
+
+                                //    // collider1 is row
+                                //    circle_contact(Vec2::new(gcp.x, gcp.y), &mut cmds)
+                                //}
+                                // TODO use manifold.find_deepest_contact
+                                // contact graph
+                                for p in manifold.points() {
+                                    // not all manifold points are actually in
+                                    // contact. If point is greater than 4
+                                    // units away, don't render it.
+                                   if (p.dist().abs() > 5.0 ) { continue; };
+                                    // FIXME we need the transform of the local space to
+                                    // draw the circles
+                                    if let Ok(transform) =
+                                        transform_query.get(*e1)
+                                    {
+                                        // draw centerpoints of colliders
+                                        //let pt = Vec2::new(transform.translation.x, transform.translation.y);
+                                        //circle_contact(pt+p.local_p1(), &mut cmds);
+                                    }
+                                    if let Ok(transform) =
+                                        transform_query.get(*e2)
+                                    {
+                                        if (*e2 == row) { println!("e2 is row");}
+                                        // draw centerpoints of colliders
+                                        // TODO apply rotation and scale
+                                        let Vec2 { x, y } = p.local_p2();
+                                        // apply transform to local contact point to get it in
+                                        // global space
+                                        let Vec3 { x, y, .. } = transform
+                                            .transform_point(Vec3::new(
+                                                x, y, 0.0,
+                                            ));
+                                        let global_contact_point =
+                                            Vec2::new(x, y);
+                                        circle_contact(
+                                            global_contact_point,
+                                            &mut cmds,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn test_collider_setup_sensor(mut commands: Commands) {
+    // create collider sensor on first row to slice brick once it hits the
+    // bottom
+    commands
+        .spawn(Collider::cuboid(BRICK_DIM * 5.0, BRICK_DIM / 2.0))
+        .insert(Sensor)
+        .insert(Row)
+        .insert(TransformBundle::from(Transform::from_xyz(
+            0.0,
+            -BRICK_DIM * (18.0 / 2.0) + BRICK_DIM,
+            0.0,
+        )));
+}
+
+// TODO circle all concat points between ACtiveTetroid and RowSensor
+// FIXME: test_collider rewrite: demo for row density calculations
+// - each row is a `RigidBody::Fixed` and we add it to a solver_group, say,
+// `Row`, that will not have contact forces generated for it when in contact
+// with any Tetroid (active or otherwise).
+// -
+//
+//
+fn test_collider_ray_cast(
     mut commands: Commands,
     mut collision_events: EventReader<CollisionEvent>,
+    mut row_sensor_query: Query<Entity, With<Row>>,
     mut tetroid_query: Query<
         (
             Entity,
@@ -412,21 +550,8 @@ fn test_collider(
                 // TODO spawn line/rectangle
 
                 // draw small circle at each intersection
-                let contac_point = shapes::Circle {
-                    radius: 2.0,
-                    center: ray_intersection.point,
-                };
-                let ray_shape =
-                    shapes::Line(ray_intersection.point, ray_destination);
-                commands
-                    .spawn((
-                        ShapeBundle {
-                            path: GeometryBuilder::build_as(&contac_point),
-                            ..default()
-                        },
-                        Stroke::new(Color::RED, 1.0),
-                    )
-                    );
+                //commands.spawn(circle_contact(ray_intersection.point));
+                circle_contact(ray_intersection.point, &mut commands);
                 true
             };
 
@@ -459,4 +584,20 @@ fn test_collider(
             //    the calculated fragments
         }
     }
+}
+
+// Circle contacts
+// draw small circle at each intersection
+fn circle_contact(center: Vec2, cmds: &mut Commands) {
+    let contact_point = shapes::Circle {
+        radius: 2.0,
+        center,
+    };
+    cmds.spawn((
+        ShapeBundle {
+            path: GeometryBuilder::build_as(&contact_point),
+            ..default()
+        },
+        Stroke::new(Color::RED, 1.0),
+    ));
 }
