@@ -2,9 +2,12 @@
 use bevy::{prelude::*, transform, window::WindowResolution};
 use bevy_prototype_lyon::prelude::*;
 use bevy_rapier2d::{
-    parry::query::details::contact_manifolds_trimesh_shape_shapes, prelude::*,
-    rapier::geometry::ActiveCollisionTypes,
+    parry::query::details::contact_manifolds_trimesh_shape_shapes,
+    prelude::*,
+    rapier::geometry::{ActiveCollisionTypes, RayIntersection},
 };
+
+use bevy::gizmos::prelude::*;
 
 // width/height of single square
 const BRICK_DIM: f32 = 30.0;
@@ -48,11 +51,18 @@ fn main() {
         // test collider
         .add_systems(Update, freeze_on_ground_contact)
         //.add_systems(Startup, test_collider_setup_sensor)
-        //.add_systems(Update, test_collider_ray_cast)
-        .add_systems(Startup, row_density_solver_setup)
-        .add_systems(Update, row_collisions)
-        //.add_systems(Update, test_collider_ray_cast)
+        .add_systems(Update, test_collider_ray_cast)
+        //.add_systems(Startup, row_density_solver_setup)
+        //.add_systems(Update, row_collisions)
+        .add_systems(Update, cast_rays)
+        // Debug ephemeral rendering
+        .add_systems(Update, gizmo_test)
+        .add_systems(Update, draw_vertices)
         .run();
+}
+
+fn gizmo_test(mut gizmos: Gizmos) {
+    gizmos.line(Vec3::ZERO, Vec3::new(30.0, 30.0, 10.0), Color::GREEN);
 }
 
 fn setup_graphics(mut commands: Commands) {
@@ -69,10 +79,18 @@ struct HitGround(Entity);
 struct ActiveTetroid;
 
 #[derive(Component)]
+struct Row;
+
+#[derive(Component)]
 struct LBlock;
 
 #[derive(Component)]
 struct Ground;
+
+#[derive(Component, Debug)]
+struct Vertices {
+    vs: Vec<Vec2>,
+}
 
 fn spawn_lblock(mut commands: Commands) {
     let lblock_pts = vec![
@@ -114,13 +132,22 @@ fn spawn_lblock(mut commands: Commands) {
             Stroke::new(Color::BLACK, 2.0),
         ))
         .insert(RigidBody::Dynamic)
+        // try with Polyline instead of convex convex decomposition
         .insert(Collider::convex_decomposition(
             &lblock_pts,
             // list of segments as vertex pairs
             &[[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]],
         ))
+        .insert(Vertices {
+            vs: lblock_pts.clone(),
+        })
+        //.insert(Collider::polyline(
+        //    lblock_pts.clone(),
+        //    // list of segments as vertex pairs
+        //    Some(vec![[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]]),
+        //))
         .insert(Restitution::coefficient(0.2))
-        //.insert(TransformBundle::from(Transform::from_xyz(0.0, 320.0, 0.0)))
+        .insert(Ccd::enabled()) // enable continous collision detection
         .insert(TransformBundle::from(Transform::from_xyz(
             -BRICK_DIM, 320.0, 0.0,
         )))
@@ -349,9 +376,6 @@ fn freeze_on_ground_contact(
     }
 }
 
-#[derive(Component)]
-struct Row;
-
 // Triggered by HitGround in order to visually confirm collision results
 // need to add solver group that ensures RowSensors cannot collide with any tetroids
 fn row_density_solver_setup(mut cmds: Commands) {
@@ -368,108 +392,6 @@ fn row_density_solver_setup(mut cmds: Commands) {
         )));
 }
 
-fn row_collisions(
-    mut cmds: Commands,
-    transform_query: Query<&GlobalTransform>,
-    rapier_context: Res<RapierContext>,
-    mut collisions: EventReader<CollisionEvent>,
-    row_query: Query<Entity, With<Row>>,
-    active_tetroid_query: Query<Entity, With<ActiveTetroid>>,
-) {
-    // for c in collisions.read() {
-    //     if let CollisionEvent::Started(e1, e2, _) = c {
-    //         println!("collision event: {:?}", c);
-    //     }
-    // }
-
-    if let Ok(at) = active_tetroid_query.get_single() {
-        if let Ok(row) = row_query.get_single() {
-            for c in collisions.read() {
-                // FIXME: i think we can just query the collision with contact pair, no?
-                if let CollisionEvent::Stopped(e1, e2, _) = c {
-                    if (*e1 == row || *e2 == row) {
-                        if let Some(contact_pair) =
-                          // can use ConttackPa
-                            rapier_context.contact_pair(*e1, *e2)
-                        {
-                            // Make sure that the collider's transform is used
-                            // to transform the contact point from local space.
-                            // TODO may not be necessary
-                            let row_collider =
-                                if contact_pair.collider1() == row {
-                                    contact_pair.collider1()
-                                } else {
-                                    contact_pair.collider2()
-                                };
-                            for manifold in contact_pair.manifolds() {
-                                //if let Ok(transform) =
-                                //    transform_query.get(row_collider)
-                                //{
-                                //    if (*e2 == row) { println!("e2 is row");}
-                                //    let row_local_n =
-                                //        if contact_pair.collider1() == row {
-                                //            manifold.local_n1()
-                                //        } else {
-                                //            manifold.local_n2()
-                                //        };
-                                //    // convert row_local_n to global space
-                                //    println!("contact normal 2: {:?}", manifold.local_n2());
-                                //    let gcp = transform
-                                //        .transform_point(Vec3::new(
-                                //            manifold.local_n2().x,
-                                //            manifold.local_n2().y,
-                                //            0.0,
-                                //        ));
-
-                                //    // collider1 is row
-                                //    circle_contact(Vec2::new(gcp.x, gcp.y), &mut cmds)
-                                //}
-                                // TODO use manifold.find_deepest_contact
-                                // contact graph
-                                for p in manifold.points() {
-                                    // not all manifold points are actually in
-                                    // contact. If point is greater than 4
-                                    // units away, don't render it.
-                                   if (p.dist().abs() > 5.0 ) { continue; };
-                                    // FIXME we need the transform of the local space to
-                                    // draw the circles
-                                    if let Ok(transform) =
-                                        transform_query.get(*e1)
-                                    {
-                                        // draw centerpoints of colliders
-                                        //let pt = Vec2::new(transform.translation.x, transform.translation.y);
-                                        //circle_contact(pt+p.local_p1(), &mut cmds);
-                                    }
-                                    if let Ok(transform) =
-                                        transform_query.get(*e2)
-                                    {
-                                        if (*e2 == row) { println!("e2 is row");}
-                                        // draw centerpoints of colliders
-                                        // TODO apply rotation and scale
-                                        let Vec2 { x, y } = p.local_p2();
-                                        // apply transform to local contact point to get it in
-                                        // global space
-                                        let Vec3 { x, y, .. } = transform
-                                            .transform_point(Vec3::new(
-                                                x, y, 0.0,
-                                            ));
-                                        let global_contact_point =
-                                            Vec2::new(x, y);
-                                        circle_contact(
-                                            global_contact_point,
-                                            &mut cmds,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn test_collider_setup_sensor(mut commands: Commands) {
     // create collider sensor on first row to slice brick once it hits the
     // bottom
@@ -484,18 +406,227 @@ fn test_collider_setup_sensor(mut commands: Commands) {
         )));
 }
 
-// TODO circle all concat points between ACtiveTetroid and RowSensor
 // FIXME: test_collider rewrite: demo for row density calculations
-// - each row is a `RigidBody::Fixed` and we add it to a solver_group, say,
-// `Row`, that will not have contact forces generated for it when in contact
-// with any Tetroid (active or otherwise).
-// -
+// TODO row density for arbitrary tetroid/debris
+// ..
+// NB. This is the general algorithm for any tetroid not just the ActiveTetroid
+// (though the initial demo will use the ActiveTetroid).
+// ..
+// 1. freeze all tetroid/debris entities on collision of active tetroid with any
+//    debris
+// 2. for a given row, r, set up four ray casts:
+// ..
+//            | r0-->| |<----r3|
+//            |      | |__     |
+//            | r1-->|___|<--r2|
+// FIXME:
+// 3. find contacts for each and classify intersection of tetroid row
+//    The tetroid/debris's intersection with the row can be classfied in one of six
+//    ways:
+//    1. Above (no contact/nominal point contact without overlap);
+//    2. Below (no/nominal contact);
+//    3. Inside, that is, no contact with rays but debris.y is between r0.y and r1.y
+//    4. Double-intersection, contacts both upper and lower rays, will be cut into
+//       three pieces.
+//    5. Upper single-intersection, contacts only upper ray, yields only two parts.
+//    6. Lower single-intersection, contacts only lower ray, yields only two parts.
+
+// FIXME: classification procedure
+// 1. Cast rays
+// 2. Check contacts:
+//    match # of collisions (filter out nominal collisions)
+//      4 -> Double-intersection (4)
+//      2 -> Single-intersection (5 or 6):
+//             check variant:
+//               if upper ray -> upper single-intersection (5)
+//               if lower ray -> lower single-intersection (6)
+//      1,3 -> error, this should not happen
+//      0 -> Check if:
+//           Inside (r1.y < debris.y < r0.y)
+//           For Below & Above: loop through vertices of debris, find lowest &
+//           highest y-coords.
+// NOTE: Demo of Double-intersection case
+fn cast_rays(
+    mut cmds: Commands,
+    rc: Res<RapierContext>,
+    mut ev_hit_ground: EventReader<HitGround>,
+) {
+    // exit if no hit ground events
+    if ev_hit_ground.is_empty() {
+        return;
+    }
+
+    println!("cast_rays: received HitGround event");
+    // board is 10 x 18
+
+    let lu_origin = Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -6.5);
+    let lb_origin = Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -7.5);
+    let ru_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -6.5);
+    let rb_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -7.5);
+    let l_dir = Vec2::new(1.0, 0.0);
+    let r_dir = Vec2::new(-1.0, 0.0);
+    // From example, unclear what appropriate value for max_toi is for this
+    // use-case
+    // see https://rapier.rs/docs/user_guides/bevy_plugin/scene_queries/#ray-casting
+    let max_toi = 300.0;
+    let filter = QueryFilter::only_dynamic();
+
+    // Cast rays -> classify (though this will *almost* always be a
+    // Double-intersection).
+    // left-upper
+
+    let bundle_hit = move |origin: Vec2, dir: Vec2| {
+        move |(entity, toi): (Entity, f32)| (entity, origin + dir * toi)
+    };
+
+    let bundle_hit_ray_intersection =
+        move |origin: Vec2, dir: Vec2| move |(ent, ri)| (ent, ri);
+
+    let mlu_hit = rc
+        .cast_ray_and_get_normal(lu_origin, l_dir, max_toi, false, filter)
+        .map(bundle_hit_ray_intersection(lu_origin, l_dir));
+    let mlb_hit = rc
+        .cast_ray(lb_origin, l_dir, max_toi, true, filter)
+        .map(bundle_hit(lb_origin, l_dir));
+
+    let mru_hit = rc
+        .cast_ray(ru_origin, r_dir, max_toi, true, filter)
+        .map(bundle_hit(ru_origin, r_dir));
+    let mrb_hit = rc
+        .cast_ray(rb_origin, r_dir, max_toi, true, filter)
+        .map(bundle_hit(rb_origin, r_dir));
+
+    match (mru_hit, mrb_hit, mlu_hit, mlb_hit) {
+        (
+            Some((ru_ent, ru_hit)),
+            Some((rb_ent, rb_hit)),
+            Some((lu_ent, lu_ri)),
+            Some((lb_ent, lb_hit)),
+        ) => {
+            println!("cast_rays: Double-intersection");
+            draw_circle_contact(ru_hit, cmds.reborrow());
+            draw_ray(cmds.reborrow(), ru_origin, ru_hit);
+
+            draw_circle_contact(rb_hit, cmds.reborrow());
+            draw_ray(cmds.reborrow(), rb_origin, rb_hit);
+
+            draw_circle_contact(lu_ri.point, cmds.reborrow());
+            draw_ray(cmds.reborrow(), lu_origin, lu_ri.point);
+            println!("cast_rays: FeatureId: {:?}", lu_ri.feature);
+            match lu_ri.feature {
+                bevy_rapier2d::parry::shape::FeatureId::Vertex(_) => {
+                    println!("vertex")
+                }
+                bevy_rapier2d::parry::shape::FeatureId::Face(_) => {
+                    println!("vertex")
+                }
+                bevy_rapier2d::parry::shape::FeatureId::Unknown => {
+                    println!("vertex")
+                }
+            }
+
+            draw_circle_contact(lb_hit, cmds.reborrow());
+            draw_ray(cmds.reborrow(), lb_origin, lb_hit);
+        }
+        _ => {
+            let x = 1;
+        } // Skipping classification for now as it shouldn't be too difficult.
+          // TODO: Identity which edge the contact point/hit lies on.
+          // - See `geommetry::RayIntersection: FeatureId`
+    }
+}
+
+// Let's see what kind of path/feature/segment data we can actually get from a
+// collider to inform the density check.
+// NOTE: just query the component `Vertices` to get the current vertices of the tetroid in local
+// space.
+fn draw_vertices(
+    mut gizmos: Gizmos,
+    mut cmds: Commands,
+    mut q_tetroid: Query<
+        (&mut Vertices, &GlobalTransform),
+        With<ActiveTetroid>,
+    >,
+) {
+    if let Ok((vs, transform)) = q_tetroid.get_single_mut() {
+        let vs_global: Vec<Vec3> = vs
+            .vs
+            .iter()
+            .map(|&Vec2 { x, y }| {
+                transform.transform_point(Vec3::new(x, y, 0.0))
+            })
+            .collect();
+    gizmos.linestrip(vs_global, Color::GREEN);  
+    }
+}
+
+// FIXME: Find area: slice debris into comonent shapes (could cache them as
+// components for when the actual slicing happens as the row density check will
+// happen continuously? ehh)
+// ..
+// 1. Get list of vertices of debris (since it's modelled as a compound shape, we
+//    either have to reassemble from `Iter<Vect, Rot, CompoundView>` (more hassle
+//    but better parity with rapier state) OR use the debris' GlobalTransform and
+//    initial vector (could attach this to the entity as component or get it from
+//    the lyon `Shape`--let's try this to start)
+//    So query ShapeBundle, get its lyon_path::Path, apply Transform of debris to
+//    get the endpoints (vertices) in global space.
+//    FIXME:
+//    Ideally, we can start at an intersection point and loop through the vertices
+//    to assemble each new shape.
+//    - The ShapeBundle's Path provides an ordered list of endpoints/line
+//    segments, so we can traverse them with an accumulator and whenever a
+//    contact point is between between two adjacent vertices we have a new
+//    vertex and collect vertices, e.g, for an upper slice, until the next
+//    contact point.
+//
+// FIXME:
+// Consider the following, which has a concavity (thus complicating things):
+// We traverse endpoints, v[0..5] (which may start with an less-than-optimal
+// vertex), with an accumulator, which has a triple of vectors to collect
+// endpoints, one for each sub-shape/slice, s0..3--it may also require a shape
+// tag indicating which of s0..3 we're traversing.
+// ..
+// The actual algorithm will:
+// 1. determing which sub shape we're collecting in--this logic is needs the
+//    intersection classification--simply checking the y-coords is enough.
+// 2. If the y-coords of the current edge cross
+//
+//TODO: how to determine where to inject the contact points?
+// - project all contact points onto current edge and select by smallest
+//  distance? Is there an edge case this fails for?
+//  - Let's try a sloppy first pass. If it bugs out, we can do a full contact
+//  order pass before the sup-shape vertex collection pass, that can do the
+//  distance test with all contacts for all edges, and then pick the best
+//  overall matches of contact to edge.
+// - If we can order the contact points within the Path, everything becomes
+// easy. We can pick as we go with min(distance(c, edge)), and each time we
+// cross a contact point, it's inserted in the correct order
+//
+//
+//
+//
+//               v0       v1
+//              ┌───────┐
+//              │  s0   │
+//          c_lu│       │c_ru
+// ────────────►x ───── x◄────────────
+//              │       │
+//              │       │v2      v3
+//              │  s1   └───────┐
+//              │               │
+//          c_lb│               │
+// ────────────►x ───────────── x◄────
+//              │     s2        │c_rb
+//              └───────────────┘
+//             v5                v4
+//
+//
 //
 //
 fn test_collider_ray_cast(
     mut commands: Commands,
     mut collision_events: EventReader<CollisionEvent>,
-    mut row_sensor_query: Query<Entity, With<Row>>,
     mut tetroid_query: Query<
         (
             Entity,
@@ -513,7 +644,7 @@ fn test_collider_ray_cast(
     // points of intersection
     //
     // cast ray to calculate intersection points
-    let ray_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -6.5);
+    let ray_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -7.5);
     let ray_dir = Vec2::new(-1.0, 0.0);
     let max_toi = 200.0;
 
@@ -542,27 +673,62 @@ fn test_collider_ray_cast(
                 );
             }
 
-            let callback = |hit_entity, ray_intersection: RayIntersection| {
-                //println!(
-                //    "hit ent {:?} at point {:?}",
-                //    hit_entity, ray_intersection.point
-                //);
-                // TODO spawn line/rectangle
-
-                // draw small circle at each intersection
-                //commands.spawn(circle_contact(ray_intersection.point));
-                circle_contact(ray_intersection.point, &mut commands);
-                true
-            };
-
+            /*
             rapier_context.intersections_with_ray(
                 ray_origin,
                 ray_dir,
                 max_toi,
                 false, // solid?
                 QueryFilter::only_dynamic(),
-                callback,
+                |_: Entity, ray_intersection| {
+                    draw_circle_contact(
+                        ray_intersection.point,
+                        commands.reborrow(),
+                    );
+                    draw_ray(
+                        commands.reborrow(),
+                        ray_origin,
+                        ray_intersection.point,
+                    );
+                    true
+                },
             );
+            */
+
+            let ray_origin_left =
+                Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -6.5);
+            let ray_dir_left = Vec2::new(1.0, 0.0);
+            if let Some((ent, toi)) = rapier_context.cast_ray(
+                ray_origin_left,
+                ray_dir_left,
+                max_toi,
+                false,
+                QueryFilter::only_dynamic(),
+            ) {
+                let hit = ray_origin_left + ray_dir_left * toi;
+                //draw_circle_contact(hit, commands.reborrow());
+                //draw_ray(commands.reborrow(), ray_origin_left, hit)
+            }
+            // top left ray (ray origin <----- contact)
+            //rapier_context.intersections_with_ray(
+            //    ray_origin_left,
+            //    ray_dir_left,
+            //    max_toi,
+            //    false, // solid?
+            //    QueryFilter::only_dynamic(),
+            //    |_: Entity, ray_intersection| {
+            //        draw_circle_contact(
+            //            ray_intersection.point,
+            //            commands.reborrow(),
+            //        );
+            //        draw_ray(
+            //            commands.reborrow(),
+            //            ray_origin_left,
+            //            ray_intersection.point,
+            //        );
+            //        true
+            //    },
+            //);
 
             //if let Some(pair_view) = rapier_context.contact_pair(*e0, *e1) {
             //    pair_view
@@ -579,6 +745,7 @@ fn test_collider_ray_cast(
             //velocity.angvel = 0.0;
             //gravity_scale.0 = 0.0;
             // 2. slice and dice
+            //
             // 3. convert from ActiveTetroid to TetroidDebris (which should
             //    be a side effect of despawning the entity and spawning
             //    the calculated fragments
@@ -588,7 +755,7 @@ fn test_collider_ray_cast(
 
 // Circle contacts
 // draw small circle at each intersection
-fn circle_contact(center: Vec2, cmds: &mut Commands) {
+fn draw_circle_contact(center: Vec2, mut cmds: Commands) {
     let contact_point = shapes::Circle {
         radius: 2.0,
         center,
@@ -596,6 +763,18 @@ fn circle_contact(center: Vec2, cmds: &mut Commands) {
     cmds.spawn((
         ShapeBundle {
             path: GeometryBuilder::build_as(&contact_point),
+            ..default()
+        },
+        Stroke::new(Color::RED, 1.0),
+    ));
+}
+
+// Draw ray
+fn draw_ray(mut cmds: Commands, origin: Vec2, contact_point: Vec2) {
+    let ray = shapes::Line(origin, contact_point);
+    cmds.spawn((
+        ShapeBundle {
+            path: GeometryBuilder::build_as(&ray),
             ..default()
         },
         Stroke::new(Color::RED, 1.0),
