@@ -15,10 +15,15 @@ use bevy_rapier2d::{
 
 use bevy::gizmos::prelude::*;
 
+mod tetroid;
+mod arena;
+
+use tetroid::components::*;
+use tetroid::{spawn_lblock, BRICK_DIM};
+use arena::{Ground, spawn_arena};
+
 // width/height of single square
-const BRICK_DIM: f32 = 30.0;
 const PIXELS_PER_METER: f32 = 100.0;
-const OUTLINE_THICKNESS: f32 = 3.0;
 
 const IMPULSE_SCALAR: f32 = 10000.0;
 
@@ -55,7 +60,7 @@ fn main() {
         .add_systems(Startup, setup_graphics)
         //        .add_systems(Startup, setup_physics)
         .add_systems(Startup, spawn_arena)
-        .add_systems(Startup, spawn_lblock_compound)
+        .add_systems(Startup, spawn_lblock)
         // TODO Update or FixedUpdate?
         .add_systems(Update, kbd_input)
         // test collider
@@ -65,15 +70,10 @@ fn main() {
         //.add_systems(Startup, row_density_solver_setup)
         //.add_systems(Update, row_collisions)
         // Debug ephemeral rendering
-        //.add_systems(Update, gizmo_test)
         //.add_systems(Update, draw_vertices)
         //.add_systems(Update, get_component_shapes)
         .add_systems(Update, cast_rays_compound)
         .run();
-}
-
-fn gizmo_test(mut gizmos: Gizmos) {
-    gizmos.line(Vec3::ZERO, Vec3::new(30.0, 30.0, 10.0), Color::GREEN);
 }
 
 fn setup_graphics(mut commands: Commands) {
@@ -84,238 +84,15 @@ fn setup_graphics(mut commands: Commands) {
 #[derive(Event)]
 struct HitGround(Entity);
 
-/* Single Block plugin */
-/// Nominal component used to label actively falling tetroid.
-#[derive(Component)]
-struct ActiveTetroid;
-
-/// Tetroids are compound shapes made up of convex polygons
-#[derive(Component)]
-struct ActiveTetroidComponent;
-
 #[derive(Component)]
 struct Row;
-
-#[derive(Component)]
-struct LBlock;
-
-#[derive(Component)]
-struct Ground;
 
 #[derive(Component, Debug)]
 struct Vertices {
     vs: Vec<Vec2>,
 }
 
-fn spawn_lblock_compound(mut commands: Commands) {
-    //let square = Collider::cuboid(BRICK_DIM / 2.0, BRICK_DIM / 2.0);
-    let square = Collider::convex_hull(&[
-        Vec2::new(0.0, 0.0),
-        Vec2::new(0.0, BRICK_DIM),
-        Vec2::new(BRICK_DIM, 0.0),
-        Vec2::new(BRICK_DIM, BRICK_DIM),
-    ])
-    .unwrap();
 
-    let lblock_compound = Collider::compound(vec![
-        // lblock has four squares
-        // | 0 |
-        // | 1 |
-        // | 2 | 3 |
-        // NB. coordinates are in local space, squares have no rotation
-        (Vec2::new(0.0, 0.0), 0.0, square.clone()),
-        (Vec2::new(0.0, -BRICK_DIM), 0.0, square.clone()),
-        (Vec2::new(0.0, -2.0 * BRICK_DIM), 0.0, square.clone()),
-        (Vec2::new(BRICK_DIM, -2.0 * BRICK_DIM), 0.0, square.clone()),
-    ]);
-
-    let lblock_components = [
-        // lblock has four squares
-        // | 0 |
-        // | 1 |
-        // | 2 | 3 |
-        // NB. coordinates are in local space, squares have no rotation
-        (Vec2::new(0.0, 0.0), square.clone()),
-        (Vec2::new(0.0, -BRICK_DIM), square.clone()),
-        (Vec2::new(0.0, -2.0 * BRICK_DIM), square.clone()),
-        (Vec2::new(BRICK_DIM, -2.0 * BRICK_DIM), square.clone()),
-    ];
-
-    commands
-        .spawn(RigidBody::Dynamic)
-        .insert(Sleeping::default())
-        .with_children(|children| {
-            lblock_components.into_iter().for_each(
-                |(Vec2 { x, y }, shape)| {
-                    children
-                        .spawn(shape)
-                        .insert(ActiveTetroidComponent)
-                        .insert(TransformBundle::from(Transform::from_xyz(
-                            x, y, 0.0,
-                        )))
-                        .insert(ActiveEvents::COLLISION_EVENTS)
-                        .insert(Friction {
-                            coefficient: 0.0,
-                            combine_rule: CoefficientCombineRule::Min,
-                        })
-                        .insert(Restitution {
-                            coefficient: 0.0,
-                            combine_rule: CoefficientCombineRule::Min,
-                        });
-                },
-            );
-        })
-        .insert(TransformBundle::from(Transform::from_xyz(
-            -BRICK_DIM, 320.0, 0.0,
-        )))
-        .insert(ExternalImpulse {
-            impulse: Vec2::new(0.0, 0.0),
-            torque_impulse: 0.0,
-        })
-        //.insert(ActiveEvents::COLLISION_EVENTS)
-        .insert(Ccd::enabled()) // enable continous collision detection
-        .insert(LBlock)
-        .insert(ActiveTetroid)
-        .insert(Velocity {
-            linvel: Vec2::new(0.0, -120.0),
-            angvel: 0.0,
-        })
-        .insert(GravityScale(0.02))
-        .log_components();
-}
-
-fn spawn_arena(mut commands: Commands) {
-    let brick_half: f32 = BRICK_DIM / 2.0;
-
-    let ground_extents = Vect {
-        x: BRICK_DIM * 5.0,
-        y: BRICK_DIM / 2.0,
-    };
-    let ground_origin_y = -BRICK_DIM * (18.0 / 2.0);
-    let ground_shape = shapes::Rectangle {
-        extents: Vect {
-            x: ground_extents.x * 2.0 - OUTLINE_THICKNESS,
-            y: ground_extents.y * 2.0 - OUTLINE_THICKNESS,
-        },
-        ..Default::default()
-    };
-    /* Create the ground. */
-    commands
-        .spawn((
-            ShapeBundle {
-                path: GeometryBuilder::build_as(&ground_shape),
-                ..default()
-            },
-            Fill::color(Color::BLACK),
-            Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
-        ))
-        .insert(RigidBody::Fixed)
-        .insert(Collider::cuboid(ground_extents.x, ground_extents.y))
-        .insert(Restitution::coefficient(0.0))
-        .insert(Friction::new(0.0))
-        .insert(TransformBundle::from(Transform::from_xyz(
-            0.0,
-            ground_origin_y,
-            0.0,
-        )))
-        .insert(Ground);
-
-    /* Create left wall */
-    let wall_shape = shapes::Rectangle {
-        extents: Vect {
-            x: BRICK_DIM - OUTLINE_THICKNESS,
-            y: BRICK_DIM * 19.0 - OUTLINE_THICKNESS,
-        },
-        ..Default::default()
-    };
-    commands
-        .spawn((
-            ShapeBundle {
-                path: GeometryBuilder::build_as(&wall_shape),
-                ..default()
-            },
-            Fill::color(Color::BLACK),
-            Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
-        ))
-        .insert(Collider::cuboid(brick_half, BRICK_DIM * 9.5))
-        .insert(Friction::new(0.0))
-        .insert(Restitution::coefficient(0.0))
-        .insert(TransformBundle::from(Transform::from_xyz(
-            -BRICK_DIM * 5.0 - brick_half,
-            0.0,
-            0.0,
-        )));
-
-    // right wall
-    commands
-        .spawn((
-            ShapeBundle {
-                path: GeometryBuilder::build_as(&wall_shape),
-                ..default()
-            },
-            Fill::color(Color::BLACK),
-            Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
-        ))
-        .insert(Collider::cuboid(brick_half, BRICK_DIM * 9.5))
-        .insert(Restitution::coefficient(0.0))
-        .insert(Friction::new(0.0))
-        .insert(TransformBundle::from(Transform::from_xyz(
-            BRICK_DIM * 5.0 + brick_half,
-            0.0,
-            0.0,
-        )));
-}
-
-fn _move_block(
-    kbd_input: Res<ButtonInput<KeyCode>>,
-    mut impulses: Query<&mut ExternalImpulse, With<LBlock>>,
-) {
-    for mut imp in impulses.iter_mut() {
-        // NOTE: impulse numbers need to be high due to reduced gravity I guess
-        if kbd_input.pressed(KeyCode::ArrowRight) {
-            println!("right");
-            imp.impulse = Vec2::new(IMPULSE_SCALAR, 0.0)
-        }
-
-        if kbd_input.pressed(KeyCode::ArrowLeft) {
-            imp.impulse = Vec2::new(-IMPULSE_SCALAR, 0.0)
-        }
-    }
-}
-
-fn _rotate_block2(
-    kbd_input: Res<ButtonInput<KeyCode>>,
-    mut ext_impulses: Query<&mut ExternalImpulse, With<LBlock>>,
-) {
-    let mut impulse = 0.0;
-    let imp = 0.5 * IMPULSE_SCALAR;
-    if kbd_input.pressed(KeyCode::KeyZ) {
-        impulse = imp;
-    } else if kbd_input.pressed(KeyCode::KeyX) {
-        impulse = -imp;
-    }
-
-    let mut lateral_impulse = 0.00;
-    let lateral_imp = 0.05 * IMPULSE_SCALAR;
-    if kbd_input.pressed(KeyCode::ArrowLeft) {
-        lateral_impulse = -lateral_imp;
-    }
-    if kbd_input.pressed(KeyCode::ArrowRight) {
-        lateral_impulse = lateral_imp;
-    }
-    for mut ext_impulse in ext_impulses.iter_mut() {
-        //println!(
-        //    "impulse: {}, lateral_impulse: {}",
-        //    &impulse, &lateral_impulse
-        //);
-        //println!(
-        //    "torque: {}, lateral: {}",
-        //    &ext_impulse.torque_impulse, &ext_impulse.impulse
-        //);
-        ext_impulse.torque_impulse = impulse;
-        ext_impulse.impulse = Vec2::new(lateral_impulse, 0.0);
-    }
-}
 
 fn kbd_input(
     kbd_input: Res<ButtonInput<KeyCode>>,
@@ -367,6 +144,12 @@ fn kbd_input(
         },
     }
 }
+
+
+/// On ground contact remove all velocity & gravity for ActiveTetroid, remove ActiveTetroid from entity
+///
+/// Event order is:
+/// HitGround -> UpdateDensity -> Slice -> UnfreezeDebris
 fn freeze_on_ground_contact_compound(
     mut commands: Commands,
     mut event_writer: EventWriter<HitGround>,
@@ -402,58 +185,8 @@ fn freeze_on_ground_contact_compound(
             }
         }
     }
-
-    //// get ground
-    //if let Ok(g) = ground_query.get_single_mut() {
-    //    for (at, mut vel, mut gs) in active_tetroid_query.iter_mut() {
-    //        println!("found at");
-    //        if let Some(contact_pair) = rc.contact_pair(g, at) {
-    //            *vel = Velocity::zero();
-    //            gs.0 = 0.0;
-    //            println!("HitGround");
-    //            event_writer.send(HitGround(g)); // FIXME send at
-    //        }
-    //    }
-    //}
 }
 
-/// On ground contact remove all velocity & gravity for ActiveTetroid, remove ActiveTetroid from entity
-///
-/// Event order is:
-/// HitGround -> UpdateDensity -> Slice -> UnfreezeDebris
-fn freeze_on_ground_contact(
-    mut commands: Commands,
-    mut event_writer: EventWriter<HitGround>,
-    mut collision_events: EventReader<CollisionEvent>,
-    mut ground_query: Query<Entity, (With<Collider>, With<Ground>)>,
-    mut active_tetroid_query: Query<
-        (Entity, &mut Velocity, &mut GravityScale),
-        (With<Collider>, With<ActiveTetroid>),
-    >,
-) {
-    match active_tetroid_query.get_single_mut() {
-        Err(_) => {}
-        Ok((at, mut vel, mut gs)) => {
-            let g = ground_query.single_mut();
-
-            for ce in collision_events.read() {
-                if let CollisionEvent::Started(e1, e2, _) = ce {
-                    // active tetroid has hit ground
-                    if (*e1 == at && *e2 == g) || (*e2 == at && *e1 == g) {
-                        // 1. freeze block on collision
-                        vel.linvel = Vect::ZERO;
-                        vel.angvel = 0.0;
-                        gs.0 = 0.0;
-
-                        event_writer.send(HitGround(at));
-                        // remove ActiveTetroid component from just-collided entity
-                        //commands.entity(at).remove::<ActiveTetroid>();
-                    }
-                }
-            }
-        }
-    }
-}
 
 // Triggered by HitGround in order to visually confirm collision results
 // need to add solver group that ensures RowSensors cannot collide with any tetroids
@@ -730,174 +463,6 @@ fn cast_rays_compound(
 //           For Below & Above: loop through vertices of debris, find lowest &
 //           highest y-coords.
 // NOTE: Demo of Double-intersection case
-fn cast_rays(
-    mut gizmos: Gizmos,
-    mut cmds: Commands,
-    rc: Res<RapierContext>,
-    mut ev_hit_ground: EventReader<HitGround>,
-    mut local_transform_query: Query<&Transform, With<ActiveTetroid>>,
-    mut collider_query: Query<
-        (&mut Collider, &GlobalTransform),
-        With<ActiveTetroid>,
-    >,
-) {
-    // exit if no hit ground events
-    if ev_hit_ground.is_empty() {
-        return;
-    }
-
-    // board is 10 x 18
-
-    let lu_origin = Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -6.5);
-    let lb_origin = Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -7.5);
-    let ru_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -6.5);
-    let rb_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -7.5);
-    let l_dir = Vec2::new(1.0, 0.0);
-    let r_dir = Vec2::new(-1.0, 0.0);
-    // From example, unclear what appropriate value for max_toi is for this
-    // use-case
-    // see https://rapier.rs/docs/user_guides/bevy_plugin/scene_queries/#ray-casting
-    let max_toi = 300.0;
-    let filter = QueryFilter::only_dynamic();
-
-    // Cast rays -> classify (though this will *almost* always be a
-    // Double-intersection).
-    // left-upper
-
-    let bundle_hit = move |origin: Vec2, dir: Vec2| {
-        move |(entity, toi): (Entity, f32)| (entity, origin + dir * toi)
-    };
-
-    let bundle_hit_ray_intersection =
-        move |origin: Vec2, dir: Vec2| move |(ent, ri)| (ent, ri);
-
-    let mlu_hit = rc
-        .cast_ray_and_get_normal(lu_origin, l_dir, max_toi, false, filter)
-        .map(bundle_hit_ray_intersection(lu_origin, l_dir));
-    let mlb_hit = rc
-        .cast_ray(lb_origin, l_dir, max_toi, true, filter)
-        .map(bundle_hit(lb_origin, l_dir));
-
-    let mru_hit = rc
-        .cast_ray(ru_origin, r_dir, max_toi, true, filter)
-        .map(bundle_hit(ru_origin, r_dir));
-    let mrb_hit = rc
-        .cast_ray(rb_origin, r_dir, max_toi, true, filter)
-        .map(bundle_hit(rb_origin, r_dir));
-
-    match (mru_hit, mrb_hit, mlu_hit, mlb_hit) {
-        (
-            Some((ru_ent, ru_hit)),
-            Some((rb_ent, rb_hit)),
-            Some((lu_ent, lu_ri)),
-            Some((lb_ent, lb_hit)),
-        ) => {
-            println!("cast_rays: Double-intersection");
-            draw_circle_contact(ru_hit, cmds.reborrow());
-            draw_ray(cmds.reborrow(), ru_origin, ru_hit);
-
-            draw_circle_contact(rb_hit, cmds.reborrow());
-            draw_ray(cmds.reborrow(), rb_origin, rb_hit);
-
-            draw_circle_contact(lu_ri.point, cmds.reborrow());
-            draw_ray(cmds.reborrow(), lu_origin, lu_ri.point);
-
-            draw_circle_contact(lb_hit, cmds.reborrow());
-            draw_ray(cmds.reborrow(), lb_origin, lb_hit);
-
-            if let Some((compound, transform)) = collider_query
-                .get_single_mut()
-                .ok()
-                .map(|(col, transform)| (Mut::into_inner(col), transform))
-                .and_then(|(c, t)| {
-                    c.as_compound().map(|compound| (compound, t))
-                })
-            {
-                for (pos, rot, collider_view) in compound.shapes() {
-                    //println!("shape_type: {:?}", collider_view);
-                    // NOTE: refined shapes start out with contact points
-                    let local_hit_lu = v3_to_2(
-                        &transform.transform_point(v2_to_3(&lu_ri.point)),
-                    );
-                    let local_hit_ru =
-                        v3_to_2(&transform.transform_point(v2_to_3(&ru_hit)));
-                    let mut upper: Vec<Vec2> = //Vec::new();
-                        vec![]; //ru_hit, lu_ri.point];
-                    let mut middle: Vec<Vec2> = //Vec::new();
-                        vec![
-                        //ru_hit,
-                        //lu_ri.point,
-                        //rb_hit,
-                        //lb_hit,
-                    ];
-                    let mut lower: Vec<Vec2> = //Vec::new();
-                        vec![]; //rb_hit, lb_hit];
-
-                    match collider_view {
-                        ColliderView::ConvexPolygon(view) => {
-                            println!("points.len: {:?}", view.points().len());
-                            for p in view.points() {
-                                // TODO: make sure bounds are correct (> vs >=)
-                                let new_p = transform
-                                    .transform_point(Vec3::new(p.x, p.y, 0.0));
-                                //let new_p = Vec3::new(p.x, p.y, 0.0);
-                                if new_p.y >= lu_origin.y {
-                                    upper.push(v3_to_2(&new_p));
-                                } else if new_p.y >= lb_origin.y {
-                                    middle.push(v3_to_2(&new_p));
-                                } else if new_p.y <= lb_origin.y {
-                                    lower.push(v3_to_2(&new_p));
-                                }
-                            }
-                        }
-                        _ => {
-                            println!("found wierd fucking shape");
-                        }
-                    }
-                    // FIXME: lmfao they're not fucking convex any more. rip
-                    // I thought we were doing this per component shape but idk.
-                    // slicing an already convex shape should not introduce concavity,
-                    // right?
-                    // - TODO: use contact points per component shape
-                    // - Perhaps explicitly create blocks out of square colliders. Maybe
-                    //   then we'll be able to see collisions with component shapes
-                    // - NOTE: use Collider:compound(..)
-                    sort_convex_hull(&mut upper);
-                    sort_convex_hull(&mut middle);
-                    sort_convex_hull(&mut lower);
-                    println!(
-                        "upper: {:?},\n middle: {:?}, lower: {:?}",
-                        &upper, &middle, &lower
-                    );
-                    spawn_convex_hull(cmds.reborrow(), upper, Color::RED);
-                    spawn_convex_hull(cmds.reborrow(), middle, Color::GREEN);
-                    spawn_convex_hull(cmds.reborrow(), lower, Color::BLUE);
-                    println!("lu_origin.y: {:?}", lu_origin.y);
-                    //let upper_test = vec![
-                    //    Vec3::new(0.0, -195.0, 0.0),
-                    //    Vec3::new(-30.0, -195.0, 0.0),
-                    //    Vec3::new(0.0, -165.10008, 0.0),
-                    //    Vec3::new(-30.0, -165.10008, 0.0),
-                    //];
-                    //gizmos.line(upper_test[1], upper_test[2], Color::RED);
-                    //gizmos.linestrip(upper_test, Color::RED);
-                    //gizmos.linestrip(middle, Color::GREEN);
-                    //gizmos.linestrip(lower, Color::BLUE);
-                }
-            }
-        }
-        _ => {
-            let x = 1;
-        } // Skipping classification for now as it shouldn't be too difficult.
-          // TODO: Identity which edge the contact point/hit lies on.
-          // - See `geommetry::RayIntersection: FeatureId`--doesn't work
-          // What we do is get the vertices from all the compound shapes and loop through them:
-          // - if a vertex is above the cutting line, it goes in s0 along with the upper line
-          //   contact points
-          // - if it's below, likewise but into s2
-          // - if inside nothing it gets added to s1 (only used for density calculations
-    }
-}
 
 // sort by lowest y, if y's are equal lowest x
 fn cmp_vec2_by_y(x: &Vec2, y: &Vec2) -> Ordering {
@@ -1054,134 +619,7 @@ fn draw_vertices(
 //
 //
 //
-fn test_collider_ray_cast(
-    mut commands: Commands,
-    mut collision_events: EventReader<CollisionEvent>,
-    mut tetroid_query: Query<
-        (
-            Entity,
-            &mut Transform,
-            &mut Collider,
-            &mut Velocity,
-            &mut GravityScale,
-        ),
-        With<ActiveTetroid>,
-    >,
-    rapier_context: Res<RapierContext>,
-) {
-    // for this demo, the block freezes when it hits the lowest row
-    // then the ray is sent from the top of the second lowest to find the
-    // points of intersection
-    //
-    // cast ray to calculate intersection points
-    let ray_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -7.5);
-    let ray_dir = Vec2::new(-1.0, 0.0);
-    let max_toi = 200.0;
-
-    let mut ray_destination = ray_origin;
-    ray_destination.x *= -1.0;
-
-    // let's try shape intersection
-
-    for ce in collision_events.read() {
-        if let CollisionEvent::Started(e0, e1, flags) = ce {
-            // determine which is activeblock
-            let (entity, transform, collider, mut velocity, mut gravity_scale) =
-                tetroid_query.single_mut();
-            println!(
-                "id: {}, e0.translation: {}, e0.rotation: {}",
-                entity.index(),
-                transform.translation,
-                transform.rotation
-            );
-
-            for pair_view in rapier_context.contact_pairs_with(entity) {
-                println!(
-                    "{:?} hits {:?}",
-                    pair_view.collider1(),
-                    pair_view.collider2()
-                );
-            }
-
-            /*
-            rapier_context.intersections_with_ray(
-                ray_origin,
-                ray_dir,
-                max_toi,
-                false, // solid?
-                QueryFilter::only_dynamic(),
-                |_: Entity, ray_intersection| {
-                    draw_circle_contact(
-                        ray_intersection.point,
-                        commands.reborrow(),
-                    );
-                    draw_ray(
-                        commands.reborrow(),
-                        ray_origin,
-                        ray_intersection.point,
-                    );
-                    true
-                },
-            );
-            */
-
-            let ray_origin_left =
-                Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -6.5);
-            let ray_dir_left = Vec2::new(1.0, 0.0);
-            if let Some((ent, toi)) = rapier_context.cast_ray(
-                ray_origin_left,
-                ray_dir_left,
-                max_toi,
-                false,
-                QueryFilter::only_dynamic(),
-            ) {
-                let hit = ray_origin_left + ray_dir_left * toi;
-                //draw_circle_contact(hit, commands.reborrow());
-                //draw_ray(commands.reborrow(), ray_origin_left, hit)
-            }
-            // top left ray (ray origin <----- contact)
-            //rapier_context.intersections_with_ray(
-            //    ray_origin_left,
-            //    ray_dir_left,
-            //    max_toi,
-            //    false, // solid?
-            //    QueryFilter::only_dynamic(),
-            //    |_: Entity, ray_intersection| {
-            //        draw_circle_contact(
-            //            ray_intersection.point,
-            //            commands.reborrow(),
-            //        );
-            //        draw_ray(
-            //            commands.reborrow(),
-            //            ray_origin_left,
-            //            ray_intersection.point,
-            //        );
-            //        true
-            //    },
-            //);
-
-            //if let Some(pair_view) = rapier_context.contact_pair(*e0, *e1) {
-            //    pair_view
-            //        .manifolds()
-            //        .for_each(|m| {
-            //            m.rigid_body1().map(|e| println!("local_p1 ent id: {:?}", e));
-            //            m.rigid_body2().map(|e| println!("local_p2 ent id: {:?}", e));
-            //            m.points().for_each(|p| println!("point: {}", p.local_p1()))
-            //        });
-            //}
-
-            // 1. freeze block on collision
-            //velocity.linvel = Vect::ZERO;
-            //velocity.angvel = 0.0;
-            //gravity_scale.0 = 0.0;
-            // 2. slice and dice
-            //
-            // 3. convert from ActiveTetroid to TetroidDebris (which should
-            //    be a side effect of despawning the entity and spawning
-            //    the calculated fragments
-        }
-    }
-}
+fn _test_collider_ray_cast() { }
 
 // Circle contacts
 // draw small circle at each intersection
