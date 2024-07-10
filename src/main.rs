@@ -10,7 +10,7 @@ use bevy_rapier2d::{
         shape::ConvexPolygon,
     },
     prelude::*,
-    rapier::geometry::ActiveCollisionTypes,
+    rapier::{dynamics::LockedAxes, geometry::ActiveCollisionTypes},
 };
 
 use bevy::gizmos::prelude::*;
@@ -143,6 +143,7 @@ fn spawn_lblock_compound(mut commands: Commands) {
 
     commands
         .spawn(RigidBody::Dynamic)
+        .insert(Sleeping::default())
         .with_children(|children| {
             lblock_components.into_iter().for_each(
                 |(Vec2 { x, y }, shape)| {
@@ -157,7 +158,6 @@ fn spawn_lblock_compound(mut commands: Commands) {
                             coefficient: 0.0,
                             combine_rule: CoefficientCombineRule::Min,
                         })
-                        .insert(Ccd::enabled()) // enable continous collision detection
                         .insert(Restitution {
                             coefficient: 0.0,
                             combine_rule: CoefficientCombineRule::Min,
@@ -172,7 +172,8 @@ fn spawn_lblock_compound(mut commands: Commands) {
             impulse: Vec2::new(0.0, 0.0),
             torque_impulse: 0.0,
         })
-        .insert(ActiveEvents::COLLISION_EVENTS)
+        //.insert(ActiveEvents::COLLISION_EVENTS)
+        .insert(Ccd::enabled()) // enable continous collision detection
         .insert(LBlock)
         .insert(ActiveTetroid)
         .insert(Velocity {
@@ -347,7 +348,6 @@ fn kbd_input(
                 }
                 if kbd_input.pressed(KeyCode::ArrowDown) {
                     impulse.y = -vertical_imp;
-                    
                 }
                 for mut ext_impulse in ext_impulses.iter_mut() {
                     //println!(
@@ -358,7 +358,10 @@ fn kbd_input(
                     //    "torque: {}, lateral: {}",
                     //    &ext_impulse.torque_impulse, &ext_impulse.impulse
                     //);
-                    *ext_impulse = ExternalImpulse { torque_impulse, impulse };
+                    *ext_impulse = ExternalImpulse {
+                        torque_impulse,
+                        impulse,
+                    };
                 }
             }
         },
@@ -371,12 +374,12 @@ fn freeze_on_ground_contact_compound(
     rc: Res<RapierContext>,
     mut ground_query: Query<Entity, (With<Collider>, With<Ground>)>,
     mut active_tetroid_query: Query<
-        (Entity, &mut Velocity, &mut GravityScale),
+        (Entity, &mut Velocity, &mut GravityScale, &mut Sleeping),
         (With<ActiveTetroid>),
     >,
 ) {
     if let Ok(ground) = ground_query.get_single_mut() {
-        if let Ok((at, mut vel, mut gs)) =
+        if let Ok((at, mut vel, mut gs, mut sleeping)) =
             active_tetroid_query.get_single_mut()
         {
             for ce in collision_events.read() {
@@ -388,6 +391,11 @@ fn freeze_on_ground_contact_compound(
                             event_writer.send(HitGround(parent));
                             *vel = Velocity::zero();
                             gs.0 = 0.0;
+                            sleeping.sleeping = true;
+
+                            // locked: bool, wake_up: bool
+
+                            //lock_translations(true, true)
                         }
                     }
                 }

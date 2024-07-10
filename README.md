@@ -25,3 +25,16 @@ or use the tetris-rs flake. Currently only the flake's shell is functional.
   drawing simple shapes
 
 
+### System Order
+
+StartGame -> SetupArena -> SpawnActiveTetroid 
+- on_tick/Update: key_handling, calculate_row_density (all rows) -> SliceRow(Row)
+- *HitDebrisOrGround -> FreezePhysics -> CalculateRowDensity [-> SliceRow(Row)] -> SpawnActiveTetroid
+- SliceRow(Row) 
+
+- on HitDebrisOrGround: 
+    - remove Active component from ActiveTetroid entity and all of its
+      children
+    - ch
+
+
