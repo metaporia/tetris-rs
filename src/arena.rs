@@ -11,10 +11,16 @@ use bevy_rapier2d::prelude::*;
 
 use crate::tetroid::BRICK_DIM;
 
-const OUTLINE_THICKNESS: f32 = 3.0;
+const OUTLINE_THICKNESS: f32 = 1.0;
 
 #[derive(Component)]
 pub struct Ground;
+
+#[derive(Component, Debug)]
+pub enum Wall {
+    Left,
+    Right,
+}
 
 pub fn spawn_arena(mut commands: Commands) {
     let brick_half: f32 = BRICK_DIM / 2.0;
@@ -33,17 +39,18 @@ pub fn spawn_arena(mut commands: Commands) {
     };
     /* Create the ground. */
     commands
-        .spawn((
-            ShapeBundle {
-                path: bevy_prototype_lyon::geometry::GeometryBuilder::build_as(
-                    &ground_shape,
-                ),
-                ..default()
-            },
-            Fill::color(Color::BLACK),
-            Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
-        ))
-        .insert(RigidBody::Fixed)
+        //.spawn((
+        //    ShapeBundle {
+        //        path: bevy_prototype_lyon::geometry::GeometryBuilder::build_as(
+        //            &ground_shape,
+        //        ),
+        //        ..default()
+        //    },
+        //    Fill::color(Color::BLACK),
+        //    Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
+        //))
+        .spawn(RigidBody::Fixed)
+        .insert(ColliderMassProperties::Mass(100.0))
         .insert(Collider::cuboid(ground_extents.x, ground_extents.y))
         .insert(Restitution::coefficient(0.0))
         .insert(Friction::new(0.0))
@@ -63,14 +70,15 @@ pub fn spawn_arena(mut commands: Commands) {
         ..Default::default()
     };
     commands
-        .spawn((
-            ShapeBundle {
-                path: GeometryBuilder::build_as(&wall_shape),
-                ..default()
-            },
-            Fill::color(Color::BLACK),
-            Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
-        ))
+        //.spawn((
+        //    ShapeBundle {
+        //        path: GeometryBuilder::build_as(&wall_shape),
+        //        ..default()
+        //    },
+        //    Fill::color(Color::BLACK),
+        //    Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
+        //))
+        .spawn(Wall::Left)
         .insert(Collider::cuboid(brick_half, BRICK_DIM * 9.5))
         .insert(Friction::new(0.0))
         .insert(Restitution::coefficient(0.0))
@@ -82,23 +90,21 @@ pub fn spawn_arena(mut commands: Commands) {
 
     // right wall
     commands
-        .spawn((
-            ShapeBundle {
-                path: GeometryBuilder::build_as(&wall_shape),
-                ..default()
-            },
-            Fill::color(Color::BLACK),
-            Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
-        ))
-        .insert(Collider::cuboid(brick_half, BRICK_DIM * 9.5))
+        //.spawn((
+        //    ShapeBundle {
+        //        path: GeometryBuilder::build_as(&wall_shape),
+        //        ..default()
+        //    },
+        //    Fill::color(Color::BLACK),
+        //    Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
+        //))
+        .spawn(Collider::cuboid(brick_half, BRICK_DIM * 9.5))
         .insert(Restitution::coefficient(0.0))
         .insert(Friction::new(0.0))
+        .insert(Wall::Right)
         .insert(TransformBundle::from(Transform::from_xyz(
             BRICK_DIM * 5.0 + brick_half,
             0.0,
             0.0,
         )));
 }
-
-
-

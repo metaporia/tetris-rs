@@ -5,6 +5,7 @@ use bevy_rapier2d::prelude::*;
 
 pub mod components;
 
+use crate::event_demo::Tetroid;
 use components::*;
 
 pub const BRICK_DIM: f32 = 30.0;
@@ -43,7 +44,7 @@ pub fn spawn_lblock(mut commands: Commands) {
         (Vec2::new(BRICK_DIM, -2.0 * BRICK_DIM), square.clone()),
     ];
 
-    commands
+    let id = commands
         .spawn(RigidBody::Dynamic)
         .insert(Sleeping::default())
         .with_children(|children| {
@@ -51,7 +52,8 @@ pub fn spawn_lblock(mut commands: Commands) {
                 |(Vec2 { x, y }, shape)| {
                     children
                         .spawn(shape)
-                        .insert(ActiveTetroidComponent)
+                        .insert(ActiveTetroidCollider)
+                        .insert(Tetroid)
                         .insert(TransformBundle::from(Transform::from_xyz(
                             x, y, 0.0,
                         )))
@@ -76,12 +78,14 @@ pub fn spawn_lblock(mut commands: Commands) {
         })
         //.insert(ActiveEvents::COLLISION_EVENTS)
         .insert(Ccd::enabled()) // enable continous collision detection
-        .insert(LBlock)
         .insert(ActiveTetroid)
+        .insert(Tetroid)
         .insert(Velocity {
             linvel: Vec2::new(0.0, -120.0),
             angvel: 0.0,
         })
         .insert(GravityScale(0.02))
-        .log_components();
+        .id();
+    //commands.entity(id).log_components();
+    info!("Spawned new lblock: {:?}", id);
 }
