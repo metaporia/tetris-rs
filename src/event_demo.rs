@@ -1,4 +1,4 @@
-//! Event loop demo
+//! Event loop deme
 //!
 //! An attempt to sort out SpawnTetroid -> (HitDebris | HitGround) loop
 //!
@@ -95,6 +95,7 @@ pub fn app() {
                 kbd_input,
                 toggle_pause,
                 reset_game.run_if(input_just_pressed(KeyCode::KeyR)),
+                reset_tetroids.run_if(input_just_pressed(KeyCode::KeyT)),
             ),
         )
         .add_systems(
@@ -328,9 +329,10 @@ impl HitMap {
     /// A collider is "in" a `Row`, r, if it has entries
     /// for `Ray`s r or r+1 (if they exist)
     ///
-    /// NOTE: fuck this doesn't catch colliders fully inside the row this is
+    /// NOTE: fuck this doesn't catch colliders fully inside the row but its
     /// fine so long as the despawn pass catches em. For the purposes of
     /// creating the convex hulls and populating the partition map, this is
+    /// FIXME: this ignore
     fn colliders_in_row(&self, row: Row) -> impl Iterator<Item = &Entity> {
         self.0
             .keys()
@@ -346,6 +348,43 @@ impl HitMap {
     }
 }
 
+/// Return iterator of colliders in a given row. This is exhaustive and
+/// includes colliders not hit by rays.
+///
+fn colliders_in_row<'a>(
+    row: Row,
+    colliders: impl Iterator<Item = (Entity, &'a Collider)>,
+    global_transforms: &Query<&GlobalTransform>,
+) -> Vec<(Entity, Vec<Vec2>)> {
+    let r: f32 = row.into();
+    let upper = (r + 1.0) * BRICK_DIM + GROUND_Y;
+    let lower = if row == 0 {
+        GROUND_Y - BRICK_DIM * 5.0
+    } else {
+        r * BRICK_DIM + GROUND_Y
+    };
+    let mut cs: Vec<(Entity, Vec<Vec2>)> = Vec::new();
+    let in_row = |p: Vec2| -> bool { 
+        lower <= p.y && p.y <= upper 
+    };
+    colliders
+        .into_iter()
+        .filter_map(|(e, c)| c.as_convex_polygon().map(|view| (e, view)))
+        .for_each(|(id, view)| {
+            let global_transform = global_transforms.get(id).unwrap();
+            let mut ps = view.points().map(|p| {
+                v3_to_2(&global_transform.transform_point(v2_to_3(&p)))
+            });
+            let ps_in_row: Vec<Vec2> = ps.filter(|&p| in_row(p)).collect();
+            if !ps_in_row.is_empty() {
+                let t = (id, ps_in_row);
+                cs.push(t)
+            }
+        });
+
+    cs
+}
+
 const ROWS: u8 = 18;
 
 #[derive(Event, Debug)]
@@ -355,28 +394,28 @@ fn clear_hit_map(
     mut unfreeze: EventReader<UnFreeze>,
     mut hitmap: ResMut<HitMap>,
 ) {
-    if !unfreeze.is_empty() {
-        unfreeze.clear();
-        hitmap.0.clear();
-    }
+    //if !unfreeze.is_empty() {
+    //   unfreeze.clear();
+    hitmap.0.clear();
+    //}
 }
 
 fn clear_partition_map(
     mut unfreeze: EventReader<UnFreeze>,
     mut partition: ResMut<Partitions>,
 ) {
-    if !unfreeze.is_empty() {
-        unfreeze.clear();
-        partition.0.clear();
-    }
+    //if !unfreeze.is_empty() {
+    //   unfreeze.clear();
+    partition.0.clear();
+    //}
 }
 
 fn draw_rows(mut cmds: Commands) {
-    for row in 1..ROWS {
-        let left_x = BRICK_DIM * -5.0;
+    for row in 0..ROWS {
+        let left_x = BRICK_DIM * -10.0;
         let y = GROUND_Y + BRICK_DIM * f32::from(row);
         let origin = Vec2::new(left_x, y);
-        let dest = Vec2::new(left_x + 25.0, y);
+        let dest = Vec2::new(left_x + 5.0 * BRICK_DIM, y);
         draw_ray(cmds.reborrow(), origin, dest);
     }
 }
@@ -387,10 +426,18 @@ type ConvexHull = Vec<Vec2>;
 // 0 =< Row <= 17
 type Row = u8;
 
+/// Determines whether point's y-coordinate falls within a given `Row`.
+///
+/// NOTE: should check for x-bound and lower y
 fn is_point_in_row(row: Row) -> impl FnMut(&Vec2) -> bool {
     let r: f32 = row.into();
     let upper = (r + 1.0) * BRICK_DIM + GROUND_Y;
-    let lower = r * BRICK_DIM + GROUND_Y;
+    let lower = if row == 0 {
+        GROUND_Y - BRICK_DIM * 5.0
+    } else {
+        r * BRICK_DIM + GROUND_Y
+    };
+    dbg!(row);
     move |&Vec2 { y, .. }| -> bool { lower <= y && y <= upper }
 }
 
@@ -412,8 +459,8 @@ fn partitions(
     rc: Res<RapierContext>,
     tetroids: Query<Entity, (With<Tetroid>, With<RigidBody>)>,
     children: Query<&Children>,
-    colliders: Query<&Collider, With<Tetroid>>,
-    global_transforms: Query<&GlobalTransform, With<Collider>>,
+    colliders: Query<(Entity, &Collider), With<Tetroid>>,
+    global_transforms: Query<&GlobalTransform>,
     mut freeze: EventReader<Freeze>,
 ) {
     //if freeze.is_empty() {
@@ -422,51 +469,49 @@ fn partitions(
     //freeze.clear();
 
     // populate partitions from `HitMap`
-    for row in 1..ROWS {
+    for row in 0..ROWS {
         // NOTE: excludes colliders fully inside a row
-        for (id, view) in hitmap.colliders_in_row(row).filter_map(|e| {
-            colliders
-                .get(*e)
-                .ok()
-                .and_then(Collider::as_convex_polygon)
-                .map(|v| (e, v))
-        }) {
+        //for (id, view) in hitmap.colliders_in_row(row).filter_map(|e| {
+        //    colliders
+        //        .get(*e)
+        //        .ok()
+        //        .and_then(Collider::as_convex_polygon)
+        //        .map(|v| (e, v))
+        //})
+
+        //let global_transform = global_transforms.get(*id).unwrap();
+        let mut in_row = colliders_in_row(row, colliders.iter(), &global_transforms);
+        println!("in_row: len = {:?}", &in_row.len());
+        in_row.iter_mut().for_each(|(id, points)| {
+            dbg!(&points.len());
             // initialize with collider points within row after appling global
             // transform
-            let global_transform = global_transforms.get(*id).unwrap();
             // FIXME: duplicate traversal of collider points for colliders that
             // intersect multiple rows
             // - How to add points to rows above and below without duplicating
             // the insertions in other passes?
-            let mut convex_hull: ConvexHull = view
-                .points()
-                .map(|p| {
-                    v3_to_2(&global_transform.transform_point(v2_to_3(&p)))
-                })
-                .filter(is_point_in_row(row))
-                .collect();
             // add lower ray hits
             if let Some(hits) = hitmap.0.get(&(*id, row)) {
-                convex_hull.extend_from_slice(hits);
+                points.extend_from_slice(hits);
             }
             // add upper ray hits
             if let Some(hits) = hitmap.0.get(&(*id, row + 1)) {
-                convex_hull.extend_from_slice(hits);
+                points.extend_from_slice(hits);
             }
 
             // Add ColliderView points and hitmap hits to partition entry for
             // key (collider, row)
-            sort_convex_hull(&mut convex_hull);
-            partitions.0.insert((*id, row), convex_hull.clone());
-            draw_convex_hull(cmds.reborrow(), convex_hull, Color::WHITE);
-        }
+            sort_convex_hull(points);
+            partitions.0.insert((*id, row), points.clone());
+            draw_convex_hull(cmds.reborrow(), points.clone(), Color::WHITE);
+            //for p in convex_hull.iter() {
+            //    draw_circle_contact(*p, cmds.reborrow())
+            //}
+        })
     }
-    // TODO: send(PartitionEvent(partitions))
-    // Event listeners: `check_area_density` and `slice_row` will receive the
-    // partitionmap.
 
-    partitions.0.clear();
-    hitmap.0.clear();
+    //partitions.0.clear();
+    //hitmap.0.clear();
 }
 
 /// Update table of intersection points of each tetroid with every row.
@@ -782,7 +827,9 @@ fn reset_game(
     mut cmds: Commands,
     tetroids: Query<Entity, With<Tetroid>>,
     shapes: Query<Entity, (With<Path>, With<Handle<ColorMaterial>>)>,
+    mut freeze: EventReader<Freeze>,
 ) {
+    freeze.clear();
     // despawn
     tetroids
         .iter()
@@ -791,5 +838,18 @@ fn reset_game(
         .iter()
         .for_each(|s| cmds.entity(s).despawn_recursive());
 
+    spawn_lblock(cmds);
+}
+
+fn reset_tetroids(
+    mut cmds: Commands,
+    tetroids: Query<Entity, With<Tetroid>>,
+    mut freeze: EventReader<Freeze>,
+) {
+    freeze.clear();
+    // despawn
+    tetroids
+        .iter()
+        .for_each(|t| cmds.entity(t).despawn_recursive());
     spawn_lblock(cmds);
 }
