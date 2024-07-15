@@ -7,13 +7,17 @@
 //! `Unfreeze` sends, the physics simulation unpauses, and `SpawnTetroid` is
 //! sent.
 
-use crate::{draw_circle_contact, draw_ray, Pause};
+use crate::{draw_circle_contact, draw_ray, spawn_convex_hull, Pause};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::utils::HashMap;
 use bevy::{prelude::*, window::WindowResolution};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use bevy_prototype_lyon::entity::Path;
 use bevy_prototype_lyon::plugin::ShapePlugin;
 use bevy_rapier2d::prelude::*;
+use bevy_rapier2d::rapier::geometry::BroadPhase;
+
+use itertools::Itertools;
 
 use crate::arena::{self, Ground};
 use crate::tetroid::{components::*, spawn_lblock, BRICK_DIM};
@@ -44,12 +48,16 @@ const VELOCITY: Velocity = Velocity {
     angvel: 0.0,
 };
 
+const GROUND_Y: f32 = -BRICK_DIM * 18.0 / 2.0;
+
 pub fn app() {
     App::new()
         .add_event::<Freeze>()
         .add_event::<UnFreeze>()
         .add_event::<DeactivateTetroid>()
         .add_event::<Pause>()
+        .insert_resource(HitMap::default())
+        .insert_resource(Partitions::default())
         .add_plugins(
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
@@ -80,18 +88,34 @@ pub fn app() {
         // my plugins
         .add_systems(Startup, setup_graphics)
         //.add_systems(Startup, (spawn_block, arena::spawn_arena))
-        .add_systems(Startup, (spawn_lblock, arena::spawn_arena))
-        .add_systems(Update, (kbd_input, toggle_pause).chain())
+        .add_systems(Startup, (spawn_lblock, arena::spawn_arena, draw_rows))
+        .add_systems(
+            Update,
+            (
+                kbd_input,
+                toggle_pause,
+                reset_game.run_if(input_just_pressed(KeyCode::KeyR)),
+            ),
+        )
         .add_systems(
             Update,
             (
                 //tetroid_hit,
                 tetroid_hit_compound,
                 freeze,
+                (
+                    row_intersections,
+                    partitions,
+                    clear_hit_map,
+                    clear_partition_map,
+                )
+                    .chain()
+                    .run_if(input_just_pressed(KeyCode::Space)),
+                //partitions,
                 cast_rays,
                 deactivate_tetroid,
                 unfreeze, // TODO consolidate unfreeze and handle_unfreeze
-                handle_unfreeze,
+                //handle_unfreeze,
                 block_spawner,
             )
                 .chain(),
@@ -295,9 +319,235 @@ fn block_spawner(mut cmds: Commands, mut freeze: EventReader<Freeze>) {
     }
 }
 
+type Ray = u8;
+
+#[derive(Resource, Debug, Default)]
+struct HitMap(HashMap<(Entity, Ray), Vec<Vec2>>);
+
+impl HitMap {
+    /// A collider is "in" a `Row`, r, if it has entries
+    /// for `Ray`s r or r+1 (if they exist)
+    ///
+    /// NOTE: fuck this doesn't catch colliders fully inside the row this is
+    /// fine so long as the despawn pass catches em. For the purposes of
+    /// creating the convex hulls and populating the partition map, this is
+    fn colliders_in_row(&self, row: Row) -> impl Iterator<Item = &Entity> {
+        self.0
+            .keys()
+            .filter_map(|(col, ray)| {
+                if row == *ray || row + 1 == *ray {
+                    Some(col)
+                } else {
+                    None
+                }
+            })
+            .sorted()
+            .dedup()
+    }
+}
+
+const ROWS: u8 = 18;
+
+#[derive(Event, Debug)]
+struct RowIntersections(HitMap);
+
+fn clear_hit_map(
+    mut unfreeze: EventReader<UnFreeze>,
+    mut hitmap: ResMut<HitMap>,
+) {
+    if !unfreeze.is_empty() {
+        unfreeze.clear();
+        hitmap.0.clear();
+    }
+}
+
+fn clear_partition_map(
+    mut unfreeze: EventReader<UnFreeze>,
+    mut partition: ResMut<Partitions>,
+) {
+    if !unfreeze.is_empty() {
+        unfreeze.clear();
+        partition.0.clear();
+    }
+}
+
+fn draw_rows(mut cmds: Commands) {
+    for row in 1..ROWS {
+        let left_x = BRICK_DIM * -5.0;
+        let y = GROUND_Y + BRICK_DIM * f32::from(row);
+        let origin = Vec2::new(left_x, y);
+        let dest = Vec2::new(left_x + 25.0, y);
+        draw_ray(cmds.reborrow(), origin, dest);
+    }
+}
+
+/// Must have more than two points
+type ConvexHull = Vec<Vec2>;
+
+// 0 =< Row <= 17
+type Row = u8;
+
+fn is_point_in_row(row: Row) -> impl FnMut(&Vec2) -> bool {
+    let r: f32 = row.into();
+    let upper = (r + 1.0) * BRICK_DIM + GROUND_Y;
+    let lower = r * BRICK_DIM + GROUND_Y;
+    move |&Vec2 { y, .. }| -> bool { lower <= y && y <= upper }
+}
+
+/// Partition map of collider in row to its partitioned collider.
+///
+/// - Since each collider has at most one partition per row,
+///   this allows us to drop the outer `Vec`
+/// - Then to perform a row slice, just grab each tetroid body in the given
+///   row, despawn the tetroid body, spawn two bodies for row+1 and row-1
+///   with their respective group of convex hulls.
+///
+#[derive(Resource, Debug, Default)]
+struct Partitions(HashMap<(Entity, Row), ConvexHull>);
+
+fn partitions(
+    mut partitions: ResMut<Partitions>,
+    mut hitmap: ResMut<HitMap>,
+    mut cmds: Commands,
+    rc: Res<RapierContext>,
+    tetroids: Query<Entity, (With<Tetroid>, With<RigidBody>)>,
+    children: Query<&Children>,
+    colliders: Query<&Collider, With<Tetroid>>,
+    global_transforms: Query<&GlobalTransform, With<Collider>>,
+    mut freeze: EventReader<Freeze>,
+) {
+    //if freeze.is_empty() {
+    //    return;
+    //}
+    //freeze.clear();
+
+    // populate partitions from `HitMap`
+    for row in 1..ROWS {
+        // NOTE: excludes colliders fully inside a row
+        for (id, view) in hitmap.colliders_in_row(row).filter_map(|e| {
+            colliders
+                .get(*e)
+                .ok()
+                .and_then(Collider::as_convex_polygon)
+                .map(|v| (e, v))
+        }) {
+            // initialize with collider points within row after appling global
+            // transform
+            let global_transform = global_transforms.get(*id).unwrap();
+            // FIXME: duplicate traversal of collider points for colliders that
+            // intersect multiple rows
+            // - How to add points to rows above and below without duplicating
+            // the insertions in other passes?
+            let mut convex_hull: ConvexHull = view
+                .points()
+                .map(|p| {
+                    v3_to_2(&global_transform.transform_point(v2_to_3(&p)))
+                })
+                .filter(is_point_in_row(row))
+                .collect();
+            // add lower ray hits
+            if let Some(hits) = hitmap.0.get(&(*id, row)) {
+                convex_hull.extend_from_slice(hits);
+            }
+            // add upper ray hits
+            if let Some(hits) = hitmap.0.get(&(*id, row + 1)) {
+                convex_hull.extend_from_slice(hits);
+            }
+
+            // Add ColliderView points and hitmap hits to partition entry for
+            // key (collider, row)
+            sort_convex_hull(&mut convex_hull);
+            partitions.0.insert((*id, row), convex_hull.clone());
+            draw_convex_hull(cmds.reborrow(), convex_hull, Color::WHITE);
+        }
+    }
+    // TODO: send(PartitionEvent(partitions))
+    // Event listeners: `check_area_density` and `slice_row` will receive the
+    // partitionmap.
+
+    partitions.0.clear();
+    hitmap.0.clear();
+}
+
+/// Update table of intersection points of each tetroid with every row.
+fn row_intersections(
+    mut hitmap: ResMut<HitMap>,
+    mut cmds: Commands,
+    rc: Res<RapierContext>,
+    tetroids: Query<Entity, (With<Tetroid>, With<Collider>)>,
+    mut freeze: EventReader<Freeze>,
+
+    colliders: Query<&Collider, With<Tetroid>>,
+    global_transforms: Query<&GlobalTransform, With<Collider>>,
+) {
+    {
+        //if freeze.is_empty() {
+        //    return;
+        //}
+        //freeze.clear();
+
+        // map of row to colliding entities
+        //let row_map: HashMap<Row, Vec<Entity>> = HashMap::new();
+        // FIXME: clear on event to avoid wiping resource within two frames
+        let left_x = BRICK_DIM * -5.0;
+        let right_x = BRICK_DIM * 5.0;
+        // NOTE: excludes very top row
+        for ray in 1..ROWS {
+            let left_origin =
+                Vec2::new(left_x, GROUND_Y + BRICK_DIM * f32::from(ray));
+            let right_origin =
+                Vec2::new(right_x, GROUND_Y + BRICK_DIM * f32::from(ray));
+            let left_dir = Vec2::X;
+            let right_dir = Vec2::X * -1.0;
+            let max_toi = 300.0;
+            let solid = true;
+            let filter = QueryFilter::only_dynamic();
+            // TODO: duplicate handling?
+            let mut on_hit = |entity: Entity, ri: RayIntersection| {
+                match hitmap.0.get_mut(&(entity, ray)) {
+                    Some(hits) => hits.push(ri.point),
+                    None => {
+                        hitmap.0.insert((entity, ray), vec![ri.point]);
+                    }
+                }
+                true
+            };
+
+            //draw_ray(cmds.reborrow(), left_origin, right_origin)
+            rc.intersections_with_ray(
+                left_origin,
+                left_dir,
+                max_toi,
+                solid,
+                filter,
+                &mut on_hit,
+            );
+            rc.intersections_with_ray(
+                right_origin,
+                right_dir,
+                max_toi,
+                solid,
+                filter,
+                &mut on_hit,
+            );
+        }
+        // populate partitions from `HitMap`
+        //partitions.0.clear();
+        //hitmap.0.clear();
+    }
+}
+
 // TODO:
-// [ ] - ignores vertices on wall (at origin) during raycast
-// [ ] - only triggers on hit ground not hit tetroid
+// [x] - ignores vertices on wall (at origin) during raycast
+// [x] - only triggers on hit ground not hit tetroid
+// [ ] - density calculation;  (density >= 90%) && Freeze -> Slice(Row)
+//       - checks all rows on tick
+//       - emit Density(Row, 0 <= usize <= 100) events
+//       - slice_rows: read `Density` events and handle slicing
+//          - on ActiveTetroidHit/Freeze (TODO), get previous density readings,
+//            for each row get `cast_rays` contact info, partition into sub
+//            tetroids.
+//       - `row_intersections`: see system docstring
 fn cast_rays(
     //mut gizmos: Gizmos,
     mut cmds: Commands,
@@ -313,17 +563,17 @@ fn cast_rays(
         freeze.clear();
         // board is 10 x 18
 
-        let lu_origin = Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -6.5);
-        let lb_origin = Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -7.5);
-        let ru_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -6.5);
-        let rb_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -7.5);
+        let lu_origin = Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -6.0);
+        let lb_origin = Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -7.0);
+        let ru_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -6.0);
+        let rb_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -7.0);
         let l_dir = Vec2::new(1.0, 0.0);
         let r_dir = Vec2::new(-1.0, 0.0);
         // From example, unclear what appropriate value for max_toi is for this
         // use-case
         // see https://rapier.rs/docs/user_guides/bevy_plugin/scene_queries/#ray-casting
         let max_toi = 300.0;
-        let filter = QueryFilter::new();
+        let filter = QueryFilter::only_dynamic();
 
         // Cast rays -> classify (though this will *almost* always be a
         // Double-intersection).
@@ -469,13 +719,17 @@ fn cast_rays(
                         //    "upper: {:?},\n middle: {:?}, lower: {:?}",
                         //    &upper, &middle, &lower
                         //);
-                        draw_convex_hull(cmds.reborrow(), upper, Color::RED);
-                        draw_convex_hull(
-                            cmds.reborrow(),
-                            middle,
-                            Color::GREEN,
-                        );
-                        draw_convex_hull(cmds.reborrow(), lower, Color::BLUE);
+                        //draw_convex_hull(cmds.reborrow(), upper, Color::RED);
+                        //draw_convex_hull(
+                        //    cmds.reborrow(),
+                        //    middle,
+                        //    Color::GREEN,
+                        //);
+                        //draw_convex_hull(
+                        //    cmds.reborrow(),
+                        //    lower,
+                        //    Color::BLUE,
+                        //);
 
                         // draw rays
                         draw_ray(cmds.reborrow(), ru_origin, lu_origin);
@@ -522,4 +776,20 @@ fn toggle_pause(
             time.pause();
         }
     }
+}
+
+fn reset_game(
+    mut cmds: Commands,
+    tetroids: Query<Entity, With<Tetroid>>,
+    shapes: Query<Entity, (With<Path>, With<Handle<ColorMaterial>>)>,
+) {
+    // despawn
+    tetroids
+        .iter()
+        .for_each(|t| cmds.entity(t).despawn_recursive());
+    shapes
+        .iter()
+        .for_each(|s| cmds.entity(s).despawn_recursive());
+
+    spawn_lblock(cmds);
 }

@@ -245,8 +245,9 @@ fn v3_to_2(Vec3 { x, y, .. }: &Vec3) -> Vec2 {
     Vec2::new(*x, *y)
 }
 
-// see https://stackoverflow.com/questions/73683410/sort-vertices-of-a-convex-polygon-in-clockwise-or-counter-clockwise
-// for algorithm
+/// Sort so that ordered traversal yields convex polygon.
+///
+/// See [stackoverflow post](https://stackoverflow.com/questions/73683410/sort-vertices-of-a-convex-polygon-in-clockwise-or-counter-clockwise) for algorithm
 fn sort_convex_hull(points: &mut [Vec2]) {
     // get lowest, left most point
     if !points.is_empty() {
@@ -418,7 +419,7 @@ fn draw_ray(mut cmds: Commands, origin: Vec2, contact_point: Vec2) {
             path: GeometryBuilder::build_as(&ray),
             ..default()
         },
-        Stroke::new(Color::RED, 1.0),
+        Stroke::new(Color::WHITE, 1.0),
     ));
 }
 

@@ -29,7 +29,7 @@ pub fn spawn_arena(mut commands: Commands) {
         x: BRICK_DIM * 5.0,
         y: BRICK_DIM / 2.0,
     };
-    let ground_origin_y = -BRICK_DIM * (18.0 / 2.0);
+    let ground_origin_y = -BRICK_DIM * (18.0 / 2.0) - 0.5 * BRICK_DIM;
     let ground_shape = shapes::Rectangle {
         extents: Vect {
             x: ground_extents.x * 2.0 - OUTLINE_THICKNESS,
@@ -84,7 +84,7 @@ pub fn spawn_arena(mut commands: Commands) {
         .insert(Restitution::coefficient(0.0))
         .insert(TransformBundle::from(Transform::from_xyz(
             -BRICK_DIM * 5.0 - brick_half,
-            0.0,
+            -BRICK_DIM * 0.5,
             0.0,
         )));
 
@@ -104,7 +104,7 @@ pub fn spawn_arena(mut commands: Commands) {
         .insert(Wall::Right)
         .insert(TransformBundle::from(Transform::from_xyz(
             BRICK_DIM * 5.0 + brick_half,
-            0.0,
+            -BRICK_DIM * 0.5,
             0.0,
         )));
 }
