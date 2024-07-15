@@ -96,7 +96,7 @@ struct HitGround(Entity);
 struct NextTetroid;
 
 #[derive(Component)]
-struct Row;
+struct Row(u8);
 
 #[derive(Component, Debug)]
 struct Vertices {
@@ -161,7 +161,7 @@ fn row_density_solver_setup(mut cmds: Commands) {
         .insert(ActiveEvents::COLLISION_EVENTS)
         .insert(SolverGroups::new(Group::GROUP_1, Group::NONE))
         .insert(RigidBody::Fixed)
-        .insert(Row)
+        .insert(Row(0))
         .insert(TransformBundle::from(Transform::from_xyz(
             0.0,
             -BRICK_DIM * (18.0 / 2.0) + BRICK_DIM,
@@ -175,7 +175,7 @@ fn test_collider_setup_sensor(mut commands: Commands) {
     commands
         .spawn(Collider::cuboid(BRICK_DIM * 5.0, BRICK_DIM / 2.0))
         .insert(Sensor)
-        .insert(Row)
+        .insert(Row(0))
         .insert(TransformBundle::from(Transform::from_xyz(
             0.0,
             -BRICK_DIM * (18.0 / 2.0) + BRICK_DIM,

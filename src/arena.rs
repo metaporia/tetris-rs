@@ -9,6 +9,7 @@ use bevy_prototype_lyon::{
 };
 use bevy_rapier2d::prelude::*;
 
+use crate::event_demo::{RowBounds, ROWS};
 use crate::tetroid::BRICK_DIM;
 
 const OUTLINE_THICKNESS: f32 = 1.0;
@@ -20,6 +21,54 @@ pub struct Ground;
 pub enum Wall {
     Left,
     Right,
+}
+
+#[derive(Resource, Debug)]
+pub struct RowDensityIndicatorMap([Entity; 18]);
+
+#[derive(Component)]
+struct DensityIndicatorSquare;
+
+#[derive(Component)]
+struct DensityIndicatorColumn;
+
+//impl FromWorld for RowDensityIndicatorMap {
+//    fn from_world(world: &mut World) -> Self {
+//        let commands = world.commands();
+//
+//    }
+//}
+
+// FIXME: 
+/// Density indicator column
+/// - made up of a square for each row
+pub fn spawn_density_indicator_column(
+    mut commands: Commands,
+    mut density_map: ResMut<RowDensityIndicatorMap>,
+) {
+    let extents = Vec2::new(BRICK_DIM, BRICK_DIM);
+    let y = BRICK_DIM * -6.5;
+    let square = shapes::Rectangle {
+        extents,
+        ..Default::default()
+    };
+    commands
+        .spawn(DensityIndicatorColumn)
+        .with_children(|column| {
+            for row in 0..ROWS {
+                if let Some(RowBounds { lower, upper }) = RowBounds::new(row) {
+                    //let id = column.spawn() ;
+                    let shape = (
+                        ShapeBundle {
+                            path: GeometryBuilder::build_as(&square),
+                            ..default()
+                        },
+                        Fill::color(Color::BLACK),
+                        Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
+                    );
+                }
+            }
+        });
 }
 
 pub fn spawn_arena(mut commands: Commands) {
@@ -90,15 +139,15 @@ pub fn spawn_arena(mut commands: Commands) {
 
     // right wall
     commands
-        //.spawn((
-        //    ShapeBundle {
-        //        path: GeometryBuilder::build_as(&wall_shape),
-        //        ..default()
-        //    },
-        //    Fill::color(Color::BLACK),
-        //    Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
-        //))
-        .spawn(Collider::cuboid(brick_half, BRICK_DIM * 9.5))
+        .spawn((
+            ShapeBundle {
+                path: GeometryBuilder::build_as(&wall_shape),
+                ..default()
+            },
+            Fill::color(Color::BLACK),
+            Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
+        ))
+        .insert(Collider::cuboid(brick_half, BRICK_DIM * 9.5))
         .insert(Restitution::coefficient(0.0))
         .insert(Friction::new(0.0))
         .insert(Wall::Right)

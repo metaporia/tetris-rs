@@ -19,6 +19,7 @@
         devShells.default = with pkgs; mkShell rec {
           LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
           buildInputs = [
+            cargo-cache
             openssl
             pkg-config
             rust-bin.beta.latest.default

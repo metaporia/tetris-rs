@@ -364,9 +364,7 @@ fn colliders_in_row<'a>(
         r * BRICK_DIM + GROUND_Y
     };
     let mut cs: Vec<(Entity, Vec<Vec2>)> = Vec::new();
-    let in_row = |p: Vec2| -> bool { 
-        lower <= p.y && p.y <= upper 
-    };
+    let in_row = |p: Vec2| -> bool { lower <= p.y && p.y <= upper };
     colliders
         .into_iter()
         .filter_map(|(e, c)| c.as_convex_polygon().map(|view| (e, view)))
@@ -385,7 +383,7 @@ fn colliders_in_row<'a>(
     cs
 }
 
-const ROWS: u8 = 18;
+pub(crate) const ROWS: u8 = 18;
 
 #[derive(Event, Debug)]
 struct RowIntersections(HitMap);
@@ -408,6 +406,28 @@ fn clear_partition_map(
     //   unfreeze.clear();
     partition.0.clear();
     //}
+}
+
+#[derive(Debug)]
+pub(crate) struct RowBounds {
+    pub lower: f32,
+    pub upper: f32,
+}
+
+impl RowBounds {
+    /// Returns `(upper: f32, lower: f32)` bounds in global game space for a given
+    /// `Row`. This centralizes row bound calculation to avoid the odd arithmetic error.
+    ///
+    /// `Row` are zero-indexed.
+    pub(crate) fn new(row: Row) -> Option<RowBounds> {
+        if row <= ROWS {
+            let lower = GROUND_Y + BRICK_DIM * f32::from(row);
+            let upper = lower + BRICK_DIM;
+            Some(RowBounds { upper, lower })
+        } else {
+            None
+        }
+    }
 }
 
 fn draw_rows(mut cmds: Commands) {
@@ -480,7 +500,8 @@ fn partitions(
         //})
 
         //let global_transform = global_transforms.get(*id).unwrap();
-        let mut in_row = colliders_in_row(row, colliders.iter(), &global_transforms);
+        let mut in_row =
+            colliders_in_row(row, colliders.iter(), &global_transforms);
         println!("in_row: len = {:?}", &in_row.len());
         in_row.iter_mut().for_each(|(id, points)| {
             dbg!(&points.len());
