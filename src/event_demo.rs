@@ -7,7 +7,9 @@
 //! `Unfreeze` sends, the physics simulation unpauses, and `SpawnTetroid` is
 //! sent.
 
-use crate::{draw_circle_contact, draw_ray, spawn_convex_hull, Pause};
+use crate::{
+    draw_circle_contact, draw_ray, draw_vertices, spawn_convex_hull, Pause,
+};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::utils::HashMap;
 use bevy::{prelude::*, window::WindowResolution};
@@ -18,8 +20,13 @@ use bevy_rapier2d::prelude::*;
 use bevy_rapier2d::rapier::geometry::BroadPhase;
 
 use itertools::Itertools;
+use std::cmp::Ordering;
+use std::iter::{once, zip};
 
-use crate::arena::{self, Ground};
+use crate::arena::{
+    self, render_row_density, spawn_density_indicator_column, Ground,
+    RowDensity, RowDensityIndicatorMap,
+};
 use crate::tetroid::{components::*, spawn_lblock, BRICK_DIM};
 use crate::{
     cast_rays_compound, draw_convex_hull, kbd_input, sort_convex_hull,
@@ -48,7 +55,7 @@ const VELOCITY: Velocity = Velocity {
     angvel: 0.0,
 };
 
-const GROUND_Y: f32 = -BRICK_DIM * 18.0 / 2.0;
+pub(crate) const GROUND_Y: f32 = -BRICK_DIM * 18.0 / 2.0;
 
 pub fn app() {
     App::new()
@@ -56,8 +63,11 @@ pub fn app() {
         .add_event::<UnFreeze>()
         .add_event::<DeactivateTetroid>()
         .add_event::<Pause>()
+        .add_event::<RowDensity>()
+        .add_event::<SliceRow>()
         .insert_resource(HitMap::default())
         .insert_resource(Partitions::default())
+        .insert_resource(RowDensityIndicatorMap::default())
         .add_plugins(
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
@@ -88,7 +98,15 @@ pub fn app() {
         // my plugins
         .add_systems(Startup, setup_graphics)
         //.add_systems(Startup, (spawn_block, arena::spawn_arena))
-        .add_systems(Startup, (spawn_lblock, arena::spawn_arena, draw_rows))
+        .add_systems(
+            Startup,
+            (
+                spawn_lblock,
+                arena::spawn_arena,
+                //draw_rows,
+                spawn_density_indicator_column,
+            ),
+        )
         .add_systems(
             Update,
             (
@@ -96,30 +114,33 @@ pub fn app() {
                 toggle_pause,
                 reset_game.run_if(input_just_pressed(KeyCode::KeyR)),
                 reset_tetroids.run_if(input_just_pressed(KeyCode::KeyT)),
+                reset_debug_shapes.run_if(input_just_pressed(KeyCode::KeyC)),
             ),
         )
         .add_systems(
             Update,
             (
-                //tetroid_hit,
-                tetroid_hit_compound,
-                freeze,
                 (
-                    row_intersections,
-                    partitions,
-                    clear_hit_map,
-                    clear_partition_map,
+                    //tetroid_hit,
+                    tetroid_hit_compound,
+                    freeze,
+                    (
+                        row_intersections,
+                        partitions,
+                        clear_hit_map,
+                        clear_partition_map,
+                        check_row_densities,
+                    )
+                        .chain(),
+                    send_slice.run_if(input_just_pressed(KeyCode::Space)),
+                    deactivate_tetroid,
+                    unfreeze, // TODO consolidate unfreeze and handle_unfreeze
+                    handle_unfreeze,
+                    block_spawner,
                 )
-                    .chain()
-                    .run_if(input_just_pressed(KeyCode::Space)),
-                //partitions,
-                cast_rays,
-                deactivate_tetroid,
-                unfreeze, // TODO consolidate unfreeze and handle_unfreeze
-                //handle_unfreeze,
-                block_spawner,
-            )
-                .chain(),
+                    .chain(),
+                render_row_density,
+            ),
         )
         //        .add_systems(Startup, setup_physics)
         //.add_systems(Update, kbd_input)
@@ -176,7 +197,7 @@ fn tetroid_hit_compound(
     if let Ok(at) = active_tetroid.get_single() {
         for child in children.iter_descendants(at) {
             for contact in rc.contact_pairs_with(child) {
-                if contact.has_any_active_contacts() {
+                if contact.has_any_active_contact() {
                     // determine which collider handle is `child`
                     let other = if contact.collider1() == child {
                         contact.collider2()
@@ -348,34 +369,39 @@ impl HitMap {
     }
 }
 
+/// Returns co
+fn children_to_unique_parents(
+    colliders: impl Iterator<Item = Entity>,
+) -> Vec<Entity> {
+    colliders.sorted().dedup().collect()
+}
+
 /// Return iterator of colliders in a given row. This is exhaustive and
 /// includes colliders not hit by rays.
 ///
 fn colliders_in_row<'a>(
     row: Row,
-    colliders: impl Iterator<Item = (Entity, &'a Collider)>,
-    global_transforms: &Query<&GlobalTransform>,
+    colliders: impl Iterator<Item = (Entity, &'a Collider, &'a GlobalTransform)>,
 ) -> Vec<(Entity, Vec<Vec2>)> {
-    let r: f32 = row.into();
-    let upper = (r + 1.0) * BRICK_DIM + GROUND_Y;
-    let lower = if row == 0 {
-        GROUND_Y - BRICK_DIM * 5.0
-    } else {
-        r * BRICK_DIM + GROUND_Y
-    };
+    //let r: f32 = row.into();
+    //let upper = (r + 1.0) * BRICK_DIM + GROUND_Y;
+    //let lower = if row == 0 {
+    //    GROUND_Y - BRICK_DIM * 9.0
+    //} else {
+    //    r * BRICK_DIM + GROUND_Y
+    //};
+    //let in_row = |p: Vec2| -> bool { lower <= p.y && p.y <= upper };
     let mut cs: Vec<(Entity, Vec<Vec2>)> = Vec::new();
-    let in_row = |p: Vec2| -> bool { lower <= p.y && p.y <= upper };
     colliders
         .into_iter()
-        .filter_map(|(e, c)| c.as_convex_polygon().map(|view| (e, view)))
-        .for_each(|(id, view)| {
-            let global_transform = global_transforms.get(id).unwrap();
-            let mut ps = view.points().map(|p| {
-                v3_to_2(&global_transform.transform_point(v2_to_3(&p)))
-            });
-            let ps_in_row: Vec<Vec2> = ps.filter(|&p| in_row(p)).collect();
-            if !ps_in_row.is_empty() {
-                let t = (id, ps_in_row);
+        .filter_map(|(e, c, t)| c.as_convex_polygon().map(|view| (e, view, t)))
+        .for_each(|(id, view, t)| {
+            let mut ps: Vec<Vec2> = view
+                .points()
+                .map(|p| v3_to_2(&t.transform_point(v2_to_3(&p))))
+                .collect();
+            if ps.iter().any(is_point_in_row(row)) {
+                let t = (id, ps);
                 cs.push(t)
             }
         });
@@ -383,7 +409,51 @@ fn colliders_in_row<'a>(
     cs
 }
 
+fn transform_point(
+    global_transform: &GlobalTransform,
+) -> impl FnMut(&Vec2) -> Vec2 + '_ {
+    |p: &Vec2| v3_to_2(&global_transform.transform_point(v2_to_3(p)))
+}
+
+fn transform_hull<'a, 'b>(
+    global_transform: &'a GlobalTransform,
+    hull: &'b ConvexHull,
+) -> impl Iterator<Item = Vec2> + 'b
+where
+    'a: 'b,
+{
+    hull.iter().map(transform_point(global_transform))
+}
+
+/// Returns all rows containing the given collider.
+fn find_bounding_rows(
+    collider: &Collider,
+    global_transform: &GlobalTransform,
+) -> Option<(f32, f32)> {
+    if let Some((min, max)) = collider.as_convex_polygon().and_then(|view| {
+        view.points().fold(None, |bounds, p| {
+            let p = global_transform.transform_point(v2_to_3(&p));
+            match bounds {
+                None => Some((p.y, p.y)),
+                Some((min, max)) => {
+                    if p.y < min {
+                        Some((p.y, max))
+                    } else if p.y > max {
+                        Some((min, p.y))
+                    } else {
+                        Some((min, max))
+                    }
+                }
+            }
+        })
+    }) {
+        //RowBounds::new(
+    }
+    None
+}
+
 pub(crate) const ROWS: u8 = 18;
+pub(crate) const COLUMNS: u8 = 10;
 
 #[derive(Event, Debug)]
 struct RowIntersections(HitMap);
@@ -412,6 +482,7 @@ fn clear_partition_map(
 pub(crate) struct RowBounds {
     pub lower: f32,
     pub upper: f32,
+    pub row: u8,
 }
 
 impl RowBounds {
@@ -419,14 +490,19 @@ impl RowBounds {
     /// `Row`. This centralizes row bound calculation to avoid the odd arithmetic error.
     ///
     /// `Row` are zero-indexed.
-    pub(crate) fn new(row: Row) -> Option<RowBounds> {
+    pub(crate) fn new(row: Row) -> Option<Self> {
         if row <= ROWS {
             let lower = GROUND_Y + BRICK_DIM * f32::from(row);
             let upper = lower + BRICK_DIM;
-            Some(RowBounds { upper, lower })
+            Some(RowBounds { upper, lower, row })
         } else {
             None
         }
+    }
+
+    pub(crate) fn from_y(y: f32) -> Option<Self> {
+        let row = (y - GROUND_Y) % BRICK_DIM;
+        Self::new(row as u8)
     }
 }
 
@@ -448,6 +524,8 @@ type Row = u8;
 
 /// Determines whether point's y-coordinate falls within a given `Row`.
 ///
+/// Expects y-coordinate in global space.
+///
 /// NOTE: should check for x-bound and lower y
 fn is_point_in_row(row: Row) -> impl FnMut(&Vec2) -> bool {
     let r: f32 = row.into();
@@ -457,7 +535,6 @@ fn is_point_in_row(row: Row) -> impl FnMut(&Vec2) -> bool {
     } else {
         r * BRICK_DIM + GROUND_Y
     };
-    dbg!(row);
     move |&Vec2 { y, .. }| -> bool { lower <= y && y <= upper }
 }
 
@@ -470,7 +547,7 @@ fn is_point_in_row(row: Row) -> impl FnMut(&Vec2) -> bool {
 ///   with their respective group of convex hulls.
 ///
 #[derive(Resource, Debug, Default)]
-struct Partitions(HashMap<(Entity, Row), ConvexHull>);
+struct Partitions(HashMap<Entity, Vec<(Row, ConvexHull)>>);
 
 fn partitions(
     mut partitions: ResMut<Partitions>,
@@ -479,32 +556,52 @@ fn partitions(
     rc: Res<RapierContext>,
     tetroids: Query<Entity, (With<Tetroid>, With<RigidBody>)>,
     children: Query<&Children>,
-    colliders: Query<(Entity, &Collider), With<Tetroid>>,
+    colliders: Query<(Entity, &Collider, &GlobalTransform), With<Tetroid>>,
     global_transforms: Query<&GlobalTransform>,
     mut freeze: EventReader<Freeze>,
+    mut slices: EventReader<SliceRow>,
+    mut densities: EventWriter<RowDensity>,
+    parents: Query<&Parent>,
 ) {
     //if freeze.is_empty() {
     //    return;
     //}
     //freeze.clear();
 
+    // CHeck for row slices to apply
+    // NOTE: may need to deduplicate
+    let rows_to_slice: Vec<u8> = slices
+        .read()
+        //.filter_map(|rd| {
+        //    if rd.density >= 0.9 {
+        //        Some(rd.row)
+        //    } else {
+        //        None
+        //    }
+        //})
+        .map(|s| s.row)
+        .sorted()
+        .dedup()
+        .collect();
+
     // populate partitions from `HitMap`
     for row in 0..ROWS {
-        // NOTE: excludes colliders fully inside a row
-        //for (id, view) in hitmap.colliders_in_row(row).filter_map(|e| {
-        //    colliders
-        //        .get(*e)
-        //        .ok()
-        //        .and_then(Collider::as_convex_polygon)
-        //        .map(|v| (e, v))
-        //})
-
         //let global_transform = global_transforms.get(*id).unwrap();
-        let mut in_row =
-            colliders_in_row(row, colliders.iter(), &global_transforms);
-        println!("in_row: len = {:?}", &in_row.len());
-        in_row.iter_mut().for_each(|(id, points)| {
-            dbg!(&points.len());
+        let mut in_row = colliders_in_row(row, colliders.iter());
+        if !in_row.is_empty() && !rows_to_slice.is_empty() {
+            dbg!(&row, &in_row);
+        }
+
+        // TODO: skip calculation when not slicing current row
+        let parents_in_row = children_to_unique_parents(
+            in_row
+                .iter()
+                .flat_map(|(child, _)| parents.iter_ancestors(*child)),
+        );
+        //dbg!(parents_in_row.len());
+        //println!("in_row: len = {:?}", &in_row.len());
+        let mut area = 0.0;
+        in_row.clone().into_iter().for_each(|(id, mut points)| {
             // initialize with collider points within row after appling global
             // transform
             // FIXME: duplicate traversal of collider points for colliders that
@@ -512,27 +609,286 @@ fn partitions(
             // - How to add points to rows above and below without duplicating
             // the insertions in other passes?
             // add lower ray hits
-            if let Some(hits) = hitmap.0.get(&(*id, row)) {
+
+            // remove points not in row
+            points.retain(is_point_in_row(row));
+            if let Some(hits) = hitmap.0.get(&(id, row)) {
                 points.extend_from_slice(hits);
             }
             // add upper ray hits
-            if let Some(hits) = hitmap.0.get(&(*id, row + 1)) {
+            if let Some(hits) = hitmap.0.get(&(id, row + 1)) {
                 points.extend_from_slice(hits);
             }
 
             // Add ColliderView points and hitmap hits to partition entry for
             // key (collider, row)
-            sort_convex_hull(points);
-            partitions.0.insert((*id, row), points.clone());
-            draw_convex_hull(cmds.reborrow(), points.clone(), Color::WHITE);
-            //for p in convex_hull.iter() {
-            //    draw_circle_contact(*p, cmds.reborrow())
-            //}
-        })
+            sort_convex_hull(&mut points);
+            area += convex_hull_area(&points);
+
+            // Update `Partition`
+            // FIXME:: partition map is not being created correctly: when
+            // slicing row 0, all entries are of row 0.
+            // FIXME: handles row 0 differently, crashes on all other rows in
+            // `colliders_in_row` because there is a collider missing a
+            // `GlobalTransform`
+            if let Some(mut row_entries) = partitions.0.get_mut(&id) {
+                // NOTE: overwrite/ignore possibly existing entry for current
+                // entity as there can (should, rather) be only one of a given
+                // collider per row
+                row_entries.push((row, points.clone()))
+            } else {
+                let v = vec![(row, points.clone())];
+                if !rows_to_slice.is_empty() {
+                    //dbg!(&v);
+                }
+                partitions.0.insert(id, v);
+            }
+
+            // slice 2nd row as test
+            let color = match Ord::cmp(&row, &2) {
+                Ordering::Greater => Srgba::RED,
+                Ordering::Equal => Srgba::BLUE,
+                Ordering::Less => Srgba::GREEN,
+            };
+            if !rows_to_slice.is_empty() {
+                //draw_convex_hull(cmds.reborrow(), points, Color::Srgba(color));
+            }
+        });
+
+        if rows_to_slice.contains(&row) {
+            dbg!(&row, &rows_to_slice);
+        }
+
+        // Calculate density
+        let total_area = f32::from(COLUMNS) * BRICK_DIM * BRICK_DIM;
+        let density = area / total_area;
+        densities.send(RowDensity { row, density });
     }
+
+
+    // NOTE: so bloody inelegant but this is a prototype after all:
+    // - with a single loop, the partition table didn't get built up completely
+    //   before trying to execute the `SliceRow`s
+    for row in 0..ROWS {
+        let mut in_row = colliders_in_row(row, colliders.iter());
+        if !in_row.is_empty() && !rows_to_slice.is_empty() {
+            dbg!(&row, &in_row);
+        }
+
+        // TODO: skip calculation when not slicing current row
+        let parents_in_row = children_to_unique_parents(
+            in_row
+                .iter()
+                .flat_map(|(child, _)| parents.iter_ancestors(*child)),
+        );
+
+        // Slice logic
+        if rows_to_slice.contains(&row) {
+            // FIXME: I forgot that above & below colliders must be attached 
+            // to separate rigidbodies if they aren't connected
+            for parent in parents_in_row {
+                // for each partent, get children, lookup (child_id, row) in
+                // partitions and collect ConvexHulls
+                //
+                // - group children into above, within, below
+
+                // lists of Result<Collider, Entity>:
+                // - colliders are new and should be spawned under a rigidbody
+                // - entities have existing colliders and can be reparented
+                let mut above = vec![];
+                let mut within = vec![];
+                let mut below = vec![];
+
+                let mut hull_to_collider =
+                    |hull: &ConvexHull| Collider::convex_hull(hull).unwrap();
+
+                //dbg!(children .iter_descendants(parent) .collect::<Vec<Entity>>());
+                for child in children.iter_descendants(parent) {
+                    // - if child collider is in row, fetch slices from `Partition`,
+                    //   - add sub-/olliders to above, withiin, and below,
+                    //     respectively
+                    // - otherwise, leave intact and add to one of above,
+                    //   within, and below
+                    if let Some(entries) = partitions.0.get(&child) {
+                        // if child is in row, use partitions, otherwise, fetch
+                        // existing colliders
+                        let is_child_in_row =
+                            in_row.iter().map(|(id, _)| id).contains(&child);
+                        if !rows_to_slice.is_empty() {
+                            info!(
+                                "row: {:?}, is_child_in_row: {:?}, id: {:?}",
+                                &row, &is_child_in_row, &child
+                            );
+                        }
+
+                        let rows = entries
+                            .iter()
+                            .map(|(r, _)| r)
+                            .collect::<Vec<&u8>>();
+                        //dbg!(rows);
+                        //dbg!(&partitions.0);
+                        entries.iter().for_each(|(collider_row, hull)| {
+                            let color = Color::Srgba(
+                                match Ord::cmp(&row, collider_row) {
+                                    Ordering::Greater => Srgba::RED,
+                                    Ordering::Equal => Srgba::BLUE,
+                                    Ordering::Less => Srgba::GREEN,
+                                },
+                            );
+                            if is_child_in_row {
+                                let col = hull_to_collider(hull);
+                                //draw_convex_hull( cmds.reborrow(), hull.clone(), color,);
+                                match Ord::cmp(&row, collider_row) {
+                                    Ordering::Greater => {
+                                        info!("above");
+                                        above.push(col);
+                                    }
+                                    Ordering::Equal => {
+                                        info!("within");
+                                        within.push(col);
+                                    }
+                                    Ordering::Less => {
+                                        info!("below");
+                                        below.push(col);
+                                    }
+                                }
+                            } else if let Ok((_, col, transform)) =
+                                colliders.get(child)
+                            {
+                                // child not in row, push existing collider
+                                // ids. We can reparent these
+                                warn!("child not in row: {}", row);
+                                let view = col.as_convex_polygon().unwrap();
+                                let global_points = view
+                                    .points()
+                                    .map(|p| transform_point(transform)(&p))
+                                    .collect();
+                                let global_collider =
+                                    hull_to_collider(&global_points);
+
+                                //draw_convex_hull( cmds.reborrow(), global_points, color,);
+                                match Ord::cmp(&row, collider_row) {
+                                    Ordering::Greater => {
+                                        info!("above");
+                                        above.push(global_collider);
+                                    }
+                                    Ordering::Equal => {
+                                        info!("within");
+                                        within.push(global_collider);
+                                    }
+                                    Ordering::Less => {
+                                        info!("below");
+                                        below.push(global_collider);
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+
+                //dbg!(&above, &below);
+                // - despawn old parent body, child bodies
+                // - spawn new bodies for above, below:
+                // spawn above
+                //if true {
+                if !above.is_empty() {
+                    let id = cmds
+                        .spawn(RigidBody::Dynamic)
+                        .insert(TransformBundle::from(Transform::from_xyz(
+                            0.0, 0.0, 0.0,
+                        )))
+                        .insert(Tetroid)
+                        .with_children(|children| {
+                            println!("spawining above");
+                            above.into_iter().for_each(|col| {
+                                let id = children
+                                    .spawn(col)
+                                    .insert((Tetroid, ActiveTetroidCollider))
+                                    .id();
+                                dbg!(id);
+                            })
+                        })
+                        .id();
+                }
+                //info!("above body id: {:?}", &id);
+                // spawn below
+                //if !within.is_empty() {
+                if false {
+                    cmds.spawn(RigidBody::Dynamic)
+                        .insert(Tetroid)
+                        .with_children(|children| {
+                            println!("spawining within");
+                            within.into_iter().for_each(|col| {
+                                children
+                                    .spawn(col)
+                                    .insert((Tetroid, ActiveTetroidCollider));
+                            })
+                        });
+                }
+                // spawn below
+                if !below.is_empty() {
+                    cmds.spawn(RigidBody::Dynamic)
+                        .insert(Tetroid)
+                        .with_children(|children| {
+                            println!("spawining below");
+                            below.into_iter().for_each(|col| {
+                                children
+                                    .spawn(col)
+                                    .insert((Tetroid, ActiveTetroidCollider));
+                            })
+                        });
+                }
+
+                // despawn parent
+                cmds.entity(parent).despawn_recursive();
+                //}
+            }
+        }
+
+            }
 
     //partitions.0.clear();
     //hitmap.0.clear();
+}
+
+fn send_slice(mut slices: EventWriter<SliceRow>) {
+    slices.send(SliceRow { row: 2 });
+}
+
+/// Check for rows above the density threshhold (0.9) and if so send `SliceRow`
+/// event.
+///
+/// As far as system ordering, this runs after `partitions` so if there is a
+/// `SliceRow`, partitions can apply it on the next `Update`.
+fn check_row_densities(
+    mut densities: EventReader<RowDensity>,
+    mut slices: EventWriter<SliceRow>,
+) {
+    densities.read().for_each(|rd| {
+        if rd.density >= 0.9 {
+            slices.send(SliceRow { row: rd.row });
+        }
+    })
+}
+
+#[derive(Event, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub(crate) struct SliceRow {
+    row: u8,
+}
+
+/// Get area of clockwise-ordered convex hull.
+///
+/// See
+/// [algorithm](https://stackoverflow.com/questions/451426/how-do-i-calculate-the-area-of-a-2d-polygon)
+///
+/// NOTE: untested
+fn convex_hull_area(convex_hull: &ConvexHull) -> f32 {
+    0.5 * zip(
+        convex_hull,
+        convex_hull[1..].iter().chain(once(&convex_hull[0])),
+    )
+    .fold(0.0, |area, (p0, p1)| area + p0.x * p1.y - p1.x * p0.y)
+    .abs()
 }
 
 /// Update table of intersection points of each tetroid with every row.
@@ -603,234 +959,6 @@ fn row_intersections(
     }
 }
 
-// TODO:
-// [x] - ignores vertices on wall (at origin) during raycast
-// [x] - only triggers on hit ground not hit tetroid
-// [ ] - density calculation;  (density >= 90%) && Freeze -> Slice(Row)
-//       - checks all rows on tick
-//       - emit Density(Row, 0 <= usize <= 100) events
-//       - slice_rows: read `Density` events and handle slicing
-//          - on ActiveTetroidHit/Freeze (TODO), get previous density readings,
-//            for each row get `cast_rays` contact info, partition into sub
-//            tetroids.
-//       - `row_intersections`: see system docstring
-fn cast_rays(
-    //mut gizmos: Gizmos,
-    mut cmds: Commands,
-    rc: Res<RapierContext>,
-    mut freeze: EventReader<Freeze>,
-    mut collider_query: Query<&GlobalTransform, With<ActiveTetroid>>,
-    mut parent_at: Query<(Entity, &mut Children), With<ActiveTetroid>>,
-    components: Query<&Collider, With<ActiveTetroidCollider>>,
-    global_transforms: Query<&GlobalTransform, With<ActiveTetroidCollider>>,
-    //mut next_tetroid_writer: EventWriter<NextTetroid>,
-) {
-    if !freeze.is_empty() {
-        freeze.clear();
-        // board is 10 x 18
-
-        let lu_origin = Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -6.0);
-        let lb_origin = Vec2::new(BRICK_DIM * -5.0, BRICK_DIM * -7.0);
-        let ru_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -6.0);
-        let rb_origin = Vec2::new(BRICK_DIM * 5.0, BRICK_DIM * -7.0);
-        let l_dir = Vec2::new(1.0, 0.0);
-        let r_dir = Vec2::new(-1.0, 0.0);
-        // From example, unclear what appropriate value for max_toi is for this
-        // use-case
-        // see https://rapier.rs/docs/user_guides/bevy_plugin/scene_queries/#ray-casting
-        let max_toi = 300.0;
-        let filter = QueryFilter::only_dynamic();
-
-        // Cast rays -> classify (though this will *almost* always be a
-        // Double-intersection).
-        // left-upper
-
-        //let bundle_hit = move |origin: Vec2, dir: Vec2| {
-        //    move |(entity, toi): (Entity, f32)| (entity, origin + dir * toi)
-        //};
-
-        //let bundle_hit_ray_intersection =
-        //    move |origin: Vec2, dir: Vec2| move |(ent, ri)| (ent, ri);
-
-        let mut active_component_map: HashMap<Entity, Vec<Vec2>> =
-            HashMap::new();
-        let mut hits: Vec<(Entity, Vec2)> = Vec::new();
-        let mut upper: Vec<Vec2> = Vec::new();
-        let mut middle: Vec<Vec2> = Vec::new();
-        let mut lower: Vec<Vec2> = Vec::new();
-
-        // TODO: for each vertex and contact point for a given collider, add all
-        // hits to one of upper, middle, or lower.
-        //
-        // FIXME:
-        // - loop through children
-        // - for each child: collect vertices and determine contact_points
-        //
-        let mut on_hit = |entity: Entity, hit: RayIntersection| {
-            //draw_circle_contact(ray_intersection.point, cmds.reborrow());
-            //let global_contact_point = global_transform
-            //.transform_point(Vec3::new(hit.point.x, hit.point.y, 0.0));
-            let p = hit.point;
-            hits.push((entity, p));
-            match active_component_map.get_mut(&entity) {
-                None => {
-                    active_component_map.insert(entity, vec![p]);
-                }
-                Some(v) => v.push(p),
-            }
-
-            true
-        };
-
-        rc.intersections_with_ray(
-            lu_origin,
-            l_dir,
-            max_toi,
-            true,
-            filter,
-            &mut on_hit,
-        );
-
-        rc.intersections_with_ray(
-            lb_origin,
-            l_dir,
-            max_toi,
-            true,
-            filter,
-            &mut on_hit,
-        );
-        rc.intersections_with_ray(
-            ru_origin,
-            r_dir,
-            max_toi,
-            true,
-            filter,
-            &mut on_hit,
-        );
-        rc.intersections_with_ray(
-            rb_origin,
-            r_dir,
-            max_toi,
-            true,
-            filter,
-            &mut on_hit,
-        );
-
-        //if let Ok((at, mut children)) = parent_at.get_single_mut() {
-        for (at, mut children) in parent_at.iter() {
-            draw_circle_contact(lu_origin, cmds.reborrow());
-            warn!("here");
-            //cmds.entity(at).remove::<ActiveTetroid>().insert(Debris);
-
-            //children.into_iter().for_each(|e| {
-            //    active_component_map.insert(e, Vec::new());
-            //});
-
-            // sort by child component id
-            //hits.sort_by_key(|(e, _)| *e);
-            //dbg!(&hits);
-            //children.sort_by_key(|id| *id);
-            for child in children.iter() {
-                //cmds.entity(*child)
-                //    .remove::<ActiveTetroidCollider>()
-                //    .insert(DebrisCollider);
-
-                // we have the hits per component in `active_component_map`,
-                // now we just need to query the vertices
-                if let Some(col) = components
-                    .get(*child)
-                    .ok()
-                    .and_then(Collider::as_convex_polygon)
-                {
-                    let mut upper: Vec<Vec2> = Vec::new();
-                    let mut middle: Vec<Vec2> = Vec::new();
-                    let mut lower: Vec<Vec2> = Vec::new();
-
-                    if let Some(v) = active_component_map.get_mut(child) {
-                        let mut partition = |p: &Vec2, high: f32, low: f32| {
-                            if p.y > high {
-                                upper.push(*p);
-                            } else if p.y == high {
-                                upper.push(*p);
-                                middle.push(*p);
-                            } else if p.y > low {
-                                middle.push(*p);
-                            } else if p.y == low {
-                                middle.push(*p);
-                                lower.push(*p);
-                            } else {
-                                lower.push(*p);
-                            }
-                        };
-                        let global_transform =
-                            global_transforms.get(*child).unwrap();
-                        col.points().for_each(|p| {
-                            let global_p = v3_to_2(
-                                &global_transform.transform_point(v2_to_3(&p)),
-                            );
-                            partition(&global_p, lu_origin.y, lb_origin.y)
-                        });
-                        v.iter().for_each(|p| {
-                            partition(p, lu_origin.y, lb_origin.y);
-                        });
-
-                        // NOTE: we're only concerned with child colliders subject
-                        // to slicing, if a collider doesn't intersect any ray, it
-                        // won't be drawn. That is, only new colliders are drawn,
-                        // old ones are left as is
-                        sort_convex_hull(&mut upper);
-                        sort_convex_hull(&mut middle);
-                        sort_convex_hull(&mut lower);
-                        //println!(
-                        //    "upper: {:?},\n middle: {:?}, lower: {:?}",
-                        //    &upper, &middle, &lower
-                        //);
-                        //draw_convex_hull(cmds.reborrow(), upper, Color::RED);
-                        //draw_convex_hull(
-                        //    cmds.reborrow(),
-                        //    middle,
-                        //    Color::GREEN,
-                        //);
-                        //draw_convex_hull(
-                        //    cmds.reborrow(),
-                        //    lower,
-                        //    Color::BLUE,
-                        //);
-
-                        // draw rays
-                        draw_ray(cmds.reborrow(), ru_origin, lu_origin);
-                        draw_ray(cmds.reborrow(), rb_origin, lb_origin);
-                        info!("drawing partitions");
-
-                        //let c = a.chain(b);
-                        //for p in col.points().chain(v.iter()) {
-                        //    // place each point into its respective bucket
-                        //}
-                    }
-                }
-            }
-
-            //cmds.entity(at).despawn_recursive();
-            //spawn_lblock(cmds.reborrow());
-        }
-    }
-
-    //let mlu_hit = rc
-    //    .cast_ray_and_get_normal(lu_origin, l_dir, max_toi, false, filter)
-    //    .map(bundle_hit_ray_intersection(lu_origin, l_dir));
-    //let mlb_hit = rc
-    //    .cast_ray(lb_origin, l_dir, max_toi, true, filter)
-    //    .map(bundle_hit(lb_origin, l_dir));
-    //let mru_hit = rc
-    //    .cast_ray(ru_origin, r_dir, max_toi, true, filter)
-    //    .map(bundle_hit(ru_origin, r_dir));
-    //let mrb_hit = rc
-    //    .cast_ray(rb_origin, r_dir, max_toi, true, filter)
-    //    .map(bundle_hit(rb_origin, r_dir));
-
-    //next_tetroid_writer.send(NextTetroid);
-}
-
 fn toggle_pause(
     mut time: ResMut<Time<Virtual>>,
     mut pause: EventReader<Pause>,
@@ -847,7 +975,10 @@ fn toggle_pause(
 fn reset_game(
     mut cmds: Commands,
     tetroids: Query<Entity, With<Tetroid>>,
-    shapes: Query<Entity, (With<Path>, With<Handle<ColorMaterial>>)>,
+    shapes: Query<
+        Entity,
+        (With<Path>, With<Handle<ColorMaterial>>, Without<Collider>),
+    >,
     mut freeze: EventReader<Freeze>,
 ) {
     freeze.clear();
@@ -870,6 +1001,22 @@ fn reset_tetroids(
     freeze.clear();
     // despawn
     tetroids
+        .iter()
+        .for_each(|t| cmds.entity(t).despawn_recursive());
+    spawn_lblock(cmds);
+}
+
+#[derive(Component)]
+pub(crate) struct DebugShape;
+
+fn reset_debug_shapes(
+    mut cmds: Commands,
+    debug_shapes: Query<Entity, With<DebugShape>>,
+    mut freeze: EventReader<Freeze>,
+) {
+    freeze.clear();
+    // despawn
+    debug_shapes
         .iter()
         .for_each(|t| cmds.entity(t).despawn_recursive());
     spawn_lblock(cmds);

@@ -5,7 +5,7 @@ use bevy_rapier2d::prelude::*;
 
 pub mod components;
 
-use crate::event_demo::Tetroid;
+use crate::event_demo::{Tetroid, GROUND_Y};
 use components::*;
 
 pub const BRICK_DIM: f32 = 30.0;
@@ -70,7 +70,7 @@ pub fn spawn_lblock(mut commands: Commands) {
             );
         })
         .insert(TransformBundle::from(Transform::from_xyz(
-            -BRICK_DIM, 320.0, 0.0,
+            -BRICK_DIM, GROUND_Y + BRICK_DIM * 21.0, 0.0,
         )))
         .insert(ExternalImpulse {
             impulse: Vec2::new(0.0, 0.0),

@@ -1,15 +1,16 @@
 // arena.rs
 
+use bevy::color::prelude::*;
 use bevy::prelude::*;
 use bevy_prototype_lyon::{
     draw::{Fill, Stroke},
     entity::ShapeBundle,
     geometry::GeometryBuilder,
-    shapes,
+    shapes::{self, Rectangle, RectangleOrigin},
 };
 use bevy_rapier2d::prelude::*;
 
-use crate::event_demo::{RowBounds, ROWS};
+use crate::event_demo::{RowBounds, GROUND_Y, ROWS};
 use crate::tetroid::BRICK_DIM;
 
 const OUTLINE_THICKNESS: f32 = 1.0;
@@ -23,23 +24,61 @@ pub enum Wall {
     Right,
 }
 
-#[derive(Resource, Debug)]
-pub struct RowDensityIndicatorMap([Entity; 18]);
+/// A `Vec<Enitity>` wrapper. The nth `Entity` represents the nth row's
+/// `DensityIndicatorSquare`. Should be initialized such that
+/// `RowDensityIndicatorMap.0 <= ROWS`.
+#[derive(Resource, Debug, Default)]
+pub struct RowDensityIndicatorMap(Vec<Entity>);
+
+impl RowDensityIndicatorMap {
+    fn get_by_row(&self, row: u8) -> Option<&Entity> {
+        self.0.get(usize::from(row))
+    }
+}
 
 #[derive(Component)]
-struct DensityIndicatorSquare;
+pub(crate) struct DensityIndicatorSquare;
 
 #[derive(Component)]
 struct DensityIndicatorColumn;
 
-//impl FromWorld for RowDensityIndicatorMap {
-//    fn from_world(world: &mut World) -> Self {
-//        let commands = world.commands();
-//
-//    }
-//}
+#[derive(Event, Debug)]
+pub(crate) struct RowDensity {
+    pub row: u8,
+    pub density: f32,
+}
 
-// FIXME: 
+/// Update row density indicator column based on latest row densities.
+/// TODO:
+/// - add `RowDensity` events
+/// - add `density_map_manager` to read `RowDensity` events and update the map
+///   from row -> density
+/// - fire `RowDensity` events at the end of the `partition` pipeline
+/// NOTE: Add `Row` to indicator map? No the index works, right?
+/// - And then we read `RowDensity(Row, Density)` events and apply each,
+/// indexing `density_map` accordingly.
+pub fn render_row_density(
+    mut commands: Commands,
+    density_map: ResMut<RowDensityIndicatorMap>,
+    mut squares: Query<&mut Fill, With<DensityIndicatorSquare>>,
+    mut densities: EventReader<RowDensity>,
+) {
+    //assert!(density_map.0.len() == 18);
+    //dbg!(density_map.0.len());
+    for r @ RowDensity { row, density } in densities.read() {
+        if let Some(RowBounds { lower, upper, row }) = RowBounds::new(*row) {
+            if let Some(id) = density_map.get_by_row(row) {
+                if let Ok(mut fill) = squares.get_mut(*id) {
+                    if let Color::Srgba(mut srgba) = fill.color {
+                        srgba.alpha = *density;
+                        fill.color = Color::Srgba(srgba)
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Density indicator column
 /// - made up of a square for each row
 pub fn spawn_density_indicator_column(
@@ -47,25 +86,52 @@ pub fn spawn_density_indicator_column(
     mut density_map: ResMut<RowDensityIndicatorMap>,
 ) {
     let extents = Vec2::new(BRICK_DIM, BRICK_DIM);
-    let y = BRICK_DIM * -6.5;
+    let x = BRICK_DIM * -6.5;
     let square = shapes::Rectangle {
         extents,
         ..Default::default()
     };
+
+    let transform_bundle = TransformBundle::from(Transform::from_xyz(
+        x,
+        GROUND_Y + BRICK_DIM * 0.5,
+        0.0,
+    ));
+
     commands
         .spawn(DensityIndicatorColumn)
+        .insert(transform_bundle)
         .with_children(|column| {
             for row in 0..ROWS {
-                if let Some(RowBounds { lower, upper }) = RowBounds::new(row) {
+                if let Some(RowBounds { lower, upper, .. }) =
+                    RowBounds::new(row)
+                {
                     //let id = column.spawn() ;
                     let shape = (
                         ShapeBundle {
                             path: GeometryBuilder::build_as(&square),
                             ..default()
                         },
-                        Fill::color(Color::BLACK),
-                        Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
+                        Fill::color(Color::Srgba(Srgba::new(
+                            0.0, 0.0, 0.0, 0.0,
+                        ))),
+                        Stroke::new(
+                            Color::Srgba(Srgba::BLACK),
+                            OUTLINE_THICKNESS,
+                        ),
                     );
+                    let transform_bundle =
+                        TransformBundle::from(Transform::from_xyz(
+                            0.0,
+                            f32::from(row) * BRICK_DIM,
+                            0.0,
+                        ));
+                    let id = column
+                        .spawn(shape)
+                        .insert(transform_bundle)
+                        .insert(DensityIndicatorSquare)
+                        .id();
+                    density_map.0.push(id);
                 }
             }
         });
@@ -144,8 +210,8 @@ pub fn spawn_arena(mut commands: Commands) {
                 path: GeometryBuilder::build_as(&wall_shape),
                 ..default()
             },
-            Fill::color(Color::BLACK),
-            Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
+            //Fill::color(Color::Srgba(Srgba::BLACK)),
+            Stroke::new(Color::Srgba(Srgba::BLACK), OUTLINE_THICKNESS),
         ))
         .insert(Collider::cuboid(brick_half, BRICK_DIM * 9.5))
         .insert(Restitution::coefficient(0.0))

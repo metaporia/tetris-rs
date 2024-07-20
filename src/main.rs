@@ -22,6 +22,7 @@ mod event_demo;
 mod tetroid;
 
 use arena::{spawn_arena, Ground};
+use event_demo::DebugShape;
 use tetroid::components::*;
 use tetroid::{spawn_lblock, BRICK_DIM};
 
@@ -270,6 +271,7 @@ fn draw_convex_hull(mut cmds: Commands, points: Vec<Vec2>, color: Color) {
             ..Default::default()
         },
         Stroke::new(color, 2.0),
+        DebugShape
     ));
 }
 
@@ -325,7 +327,7 @@ fn draw_vertices(
                 transform.transform_point(Vec3::new(x, y, 0.0))
             })
             .collect();
-        gizmos.linestrip(vs_global, Color::GREEN);
+        gizmos.linestrip(vs_global, Color::Srgba(Srgba::GREEN));
     }
 }
 
@@ -407,7 +409,7 @@ fn draw_circle_contact(center: Vec2, mut cmds: Commands) {
             path: GeometryBuilder::build_as(&contact_point),
             ..default()
         },
-        Stroke::new(Color::RED, 1.0),
+        Stroke::new(Color::Srgba(Srgba::BLACK), 1.0),
     ));
 }
 
@@ -419,7 +421,7 @@ fn draw_ray(mut cmds: Commands, origin: Vec2, contact_point: Vec2) {
             path: GeometryBuilder::build_as(&ray),
             ..default()
         },
-        Stroke::new(Color::WHITE, 1.0),
+        Stroke::new(Color::Srgba(Srgba::WHITE), 1.0),
     ));
 }
 
@@ -608,17 +610,17 @@ fn cast_rays_compound(
                             draw_convex_hull(
                                 cmds.reborrow(),
                                 upper,
-                                Color::RED,
+                                Color::Srgba(Srgba::RED),
                             );
                             draw_convex_hull(
                                 cmds.reborrow(),
                                 middle,
-                                Color::GREEN,
+                                Color::Srgba(Srgba::GREEN),
                             );
                             draw_convex_hull(
                                 cmds.reborrow(),
                                 lower,
-                                Color::BLUE,
+                                Color::Srgba(Srgba::BLUE),
                             );
 
                             // draw rays
