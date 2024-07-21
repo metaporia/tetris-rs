@@ -27,7 +27,10 @@ use crate::arena::{
     self, render_row_density, spawn_density_indicator_column, Ground,
     RowDensity, RowDensityIndicatorMap,
 };
-use crate::tetroid::{components::*, spawn_lblock, BRICK_DIM};
+use crate::tetroid::{
+    components::*, spawn_lblock, TetroidColliderBundle, TetrominoBundle,
+    BRICK_DIM,
+};
 use crate::{
     cast_rays_compound, draw_convex_hull, kbd_input, sort_convex_hull,
     v2_to_3, v3_to_2,
@@ -45,7 +48,7 @@ struct DeactivateTetroid;
 #[derive(Event, Debug)]
 struct SpawnTetroid;
 
-#[derive(Component, Debug)]
+#[derive(Component, Debug, Default)]
 pub(crate) struct Tetroid;
 
 const PIXELS_PER_METER: f32 = 50.0;
@@ -724,71 +727,12 @@ fn partitions(
                 }
 
                 if !above.is_empty() {
-                    let groups =
-                        group_hulls(above).into_values().map(|group| {
-                            group.into_iter().map(|h| hull_to_collider(&h))
-                        });
-                    for group in groups {
-                        let id = cmds
-                            .spawn(RigidBody::Dynamic)
-                            .insert(Sleeping::default())
-                            .insert(TransformBundle::default())
-                            .insert(ExternalImpulse::default())
-                            .insert(Velocity::default())
-                            .insert(Ccd::enabled())
-                            .insert(GravityScale(1.0))
-                            .insert(TransformBundle::default())
-                            .insert(Tetroid)
-                            .with_children(|children| {
-                                println!("spawining above");
-                                assert!(group.len() >= 1);
-                                group.into_iter().for_each(|col| {
-                                    let id = children
-                                        .spawn(col)
-                                        .insert((
-                                            Tetroid,
-                                            TransformBundle::IDENTITY,
-                                            ActiveTetroidCollider,
-                                            ActiveEvents::COLLISION_EVENTS,
-                                        ))
-                                        .id();
-                                    //dbg!(id);
-                                })
-                            })
-                            .id();
-                    }
+                    spawn_hull_groups(cmds.reborrow(), above);
                 }
 
                 // spawn below
                 if !below.is_empty() {
-                    let groups =
-                        group_hulls(below).into_values().map(|group| {
-                            group.into_iter().map(|h| hull_to_collider(&h))
-                        });
-                    for group in groups {
-                        cmds.spawn(RigidBody::Dynamic)
-                            .insert(Sleeping::default())
-                            .insert(TransformBundle::default())
-                            .insert(ExternalImpulse::default())
-                            .insert(Sleeping::default())
-                            .insert(Ccd::enabled())
-                            .insert(Velocity::default())
-                            .insert(GravityScale(1.0))
-                            .insert(Tetroid)
-                            .with_children(|children| {
-                                println!("spawining below");
-                                assert!(group.len() >= 1);
-                                group.into_iter().for_each(|col| {
-                                    children.spawn(col).insert((
-                                        Tetroid,
-                                        TransformBundle::IDENTITY,
-                                        ActiveEvents::COLLISION_EVENTS,
-                                        ActiveTetroidCollider,
-                                    ));
-                                })
-                            })
-                            .log_components();
-                    }
+                    spawn_hull_groups(cmds.reborrow(), below);
                 }
 
                 // despawn parent
@@ -805,9 +749,28 @@ fn partitions(
             //spawn_lblock(cmds.reborrow());
         }
     }
-
     //partitions.0.clear();
     //hitmap.0.clear();
+}
+
+/// Check for disconnected shapes.
+/// For each group of connected hulls, spawn a `RigidBody` whose children are
+/// the members of the group.
+fn spawn_hull_groups(mut cmds: Commands, convex_hulls: Vec<Vec<Vec2>>) {
+    let groups = group_hulls(convex_hulls).into_values();
+    for group in groups {
+        assert!(!group.is_empty());
+        let colliders = group
+            .into_iter()
+            .map(|h| Collider::convex_hull(&h).unwrap());
+        // Post slice chunks get full gravity.
+        cmds.spawn(TetrominoBundle::new(1.0))
+            .with_children(|children| {
+                colliders.for_each(|col| {
+                    children.spawn(TetroidColliderBundle::new(col));
+                })
+            });
+    }
 }
 
 // Check if two `ConvexHull`s are contiguous by checking for any shared vertex.
