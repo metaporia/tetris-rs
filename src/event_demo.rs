@@ -665,7 +665,6 @@ fn partitions(
         densities.send(RowDensity { row, density });
     }
 
-
     // NOTE: so bloody inelegant but this is a prototype after all:
     // - with a single loop, the partition table didn't get built up completely
     //   before trying to execute the `SliceRow`s
@@ -684,8 +683,11 @@ fn partitions(
 
         // Slice logic
         if rows_to_slice.contains(&row) {
-            // FIXME: I forgot that above & below colliders must be attached 
+            // FIXME: I forgot that above & below colliders must be attached
             // to separate rigidbodies if they aren't connected
+            //
+            let mut hull_to_collider =
+                |hull: &ConvexHull| Collider::convex_hull(hull).unwrap();
             for parent in parents_in_row {
                 // for each partent, get children, lookup (child_id, row) in
                 // partitions and collect ConvexHulls
@@ -698,9 +700,6 @@ fn partitions(
                 let mut above = vec![];
                 let mut within = vec![];
                 let mut below = vec![];
-
-                let mut hull_to_collider =
-                    |hull: &ConvexHull| Collider::convex_hull(hull).unwrap();
 
                 //dbg!(children .iter_descendants(parent) .collect::<Vec<Entity>>());
                 for child in children.iter_descendants(parent) {
@@ -736,20 +735,19 @@ fn partitions(
                                 },
                             );
                             if is_child_in_row {
-                                let col = hull_to_collider(hull);
                                 //draw_convex_hull( cmds.reborrow(), hull.clone(), color,);
                                 match Ord::cmp(&row, collider_row) {
                                     Ordering::Greater => {
                                         info!("above");
-                                        above.push(col);
+                                        above.push(hull.clone());
                                     }
                                     Ordering::Equal => {
                                         info!("within");
-                                        within.push(col);
+                                        within.push(hull.clone());
                                     }
                                     Ordering::Less => {
                                         info!("below");
-                                        below.push(col);
+                                        below.push(hull.clone());
                                     }
                                 }
                             } else if let Ok((_, col, transform)) =
@@ -759,26 +757,26 @@ fn partitions(
                                 // ids. We can reparent these
                                 warn!("child not in row: {}", row);
                                 let view = col.as_convex_polygon().unwrap();
-                                let global_points = view
+                                let global_points: Vec<Vec2> = view
                                     .points()
                                     .map(|p| transform_point(transform)(&p))
                                     .collect();
-                                let global_collider =
-                                    hull_to_collider(&global_points);
+                                //let global_points =
+                                //    hull_to_collider(&global_points);
 
                                 //draw_convex_hull( cmds.reborrow(), global_points, color,);
                                 match Ord::cmp(&row, collider_row) {
                                     Ordering::Greater => {
                                         info!("above");
-                                        above.push(global_collider);
+                                        above.push(global_points);
                                     }
                                     Ordering::Equal => {
                                         info!("within");
-                                        within.push(global_collider);
+                                        within.push(global_points);
                                     }
                                     Ordering::Less => {
                                         info!("below");
-                                        below.push(global_collider);
+                                        below.push(global_points);
                                     }
                                 }
                             }
@@ -792,51 +790,75 @@ fn partitions(
                 // spawn above
                 //if true {
                 if !above.is_empty() {
-                    let id = cmds
-                        .spawn(RigidBody::Dynamic)
-                        .insert(TransformBundle::from(Transform::from_xyz(
-                            0.0, 0.0, 0.0,
-                        )))
-                        .insert(Tetroid)
-                        .with_children(|children| {
-                            println!("spawining above");
-                            above.into_iter().for_each(|col| {
-                                let id = children
-                                    .spawn(col)
-                                    .insert((Tetroid, ActiveTetroidCollider))
-                                    .id();
-                                dbg!(id);
+                    let groups =
+                        group_hulls(above).into_values().map(|group| {
+                            group.into_iter().map(|h| hull_to_collider(&h))
+                        });
+                    dbg!(groups.len());
+                    for group in groups {
+                        let id = cmds
+                            .spawn(RigidBody::Dynamic)
+                            .insert(TransformBundle::from(
+                                Transform::from_xyz(0.0, 0.0, 0.0),
+                            ))
+                            .insert(Tetroid)
+                            .with_children(|children| {
+                                println!("spawining above");
+                                group.into_iter().for_each(|col| {
+                                    let id = children
+                                        .spawn(col)
+                                        .insert((
+                                            Tetroid,
+                                            ActiveTetroidCollider,
+                                        ))
+                                        .id();
+                                    dbg!(id);
+                                })
                             })
-                        })
-                        .id();
+                            .id();
+                    }
                 }
                 //info!("above body id: {:?}", &id);
                 // spawn below
                 //if !within.is_empty() {
-                if false {
-                    cmds.spawn(RigidBody::Dynamic)
-                        .insert(Tetroid)
-                        .with_children(|children| {
-                            println!("spawining within");
-                            within.into_iter().for_each(|col| {
-                                children
-                                    .spawn(col)
-                                    .insert((Tetroid, ActiveTetroidCollider));
-                            })
-                        });
-                }
+                //if false {
+                //    let groups = group_hulls(above)
+                //        .into_values()
+                //        .map(|group| group.into_iter().map(hull_to_collider));
+                //    for group in groups {
+                //        cmds.spawn(RigidBody::Dynamic)
+                //            .insert(Tetroid)
+                //            .with_children(|children| {
+                //                println!("spawining within");
+                //                group.into_iter().for_each(|col| {
+                //                    children.spawn(col).insert((
+                //                        Tetroid,
+                //                        ActiveTetroidCollider,
+                //                    ));
+                //                })
+                //            });
+                //    }
+                //}
+
                 // spawn below
                 if !below.is_empty() {
-                    cmds.spawn(RigidBody::Dynamic)
-                        .insert(Tetroid)
-                        .with_children(|children| {
-                            println!("spawining below");
-                            below.into_iter().for_each(|col| {
-                                children
-                                    .spawn(col)
-                                    .insert((Tetroid, ActiveTetroidCollider));
-                            })
+                    let groups =
+                        group_hulls(below).into_values().map(|group| {
+                            group.into_iter().map(|h| hull_to_collider(&h))
                         });
+                    for group in groups {
+                        cmds.spawn(RigidBody::Dynamic)
+                            .insert(Tetroid)
+                            .with_children(|children| {
+                                println!("spawining below");
+                                group.into_iter().for_each(|col| {
+                                    children.spawn(col).insert((
+                                        Tetroid,
+                                        ActiveTetroidCollider,
+                                    ));
+                                })
+                            });
+                    }
                 }
 
                 // despawn parent
@@ -844,11 +866,60 @@ fn partitions(
                 //}
             }
         }
-
-            }
+    }
 
     //partitions.0.clear();
     //hitmap.0.clear();
+}
+
+// Check if two `ConvexHull`s are contiguous by checking for any shared vertex.
+// This only works because of the convex slices and limited convexity of the
+// tetroids.
+//
+// Usess `max_error = 0.0` for fuzzy equality check.
+fn any_shared_point(ls: &[Vec2], rs: &[Vec2]) -> bool
+where
+{
+    let max_error = 0.01;
+    ls.iter().any(|l| {
+        rs.iter().any(|r| {
+            (r.y - l.y).abs() <= max_error && (r.x - l.y).abs() <= max_error
+        })
+    })
+}
+
+fn group_hulls(hulls: Vec<ConvexHull>) -> HashMap<usize, Vec<ConvexHull>> {
+    let mut groups: HashMap<usize, Vec<ConvexHull>> = HashMap::new();
+    let mut group_counter: usize = 0;
+
+    for hull in hulls {
+        // check if hull is connected to existing group
+        let mut in_group = None;
+        for (id, mut group) in groups.iter_mut() {
+            for h in group.iter() {
+                if any_shared_point(&hull, h) {
+                    in_group = Some(*id);
+                }
+            }
+        }
+
+        match in_group {
+            // if `hull` not found in existing group,
+            // -> create new group containing `hull`
+            None => {
+                groups.insert(group_counter, vec![hull]);
+                group_counter += 1;
+            }
+            // otherwise add `hull` to group
+            Some(id) => {
+                if let Some(mut v) = groups.get_mut(&id) {
+                    v.push(hull);
+                }
+            }
+        }
+    }
+
+    groups
 }
 
 fn send_slice(mut slices: EventWriter<SliceRow>) {

@@ -10,6 +10,19 @@ use components::*;
 
 pub const BRICK_DIM: f32 = 30.0;
 
+#[derive(Component)]
+pub(crate) struct ContiguityIndex(usize);
+
+impl ContiguityIndex {
+    pub(crate) fn contiguous_with(&self, other: &Self) -> bool {
+        if self.0 == 0 {
+            other.0 == 1
+        } else {
+            self.0 - 1 == other.0 || self.0 + 1 == other.0
+        }
+    }
+}
+
 pub fn spawn_lblock(mut commands: Commands) {
     //let square = Collider::cuboid(BRICK_DIM / 2.0, BRICK_DIM / 2.0);
     let square = Collider::convex_hull(&[
@@ -26,6 +39,8 @@ pub fn spawn_lblock(mut commands: Commands) {
         // | 1 |
         // | 2 | 3 |
         // NB. coordinates are in local space, squares have no rotation
+        // NOTE: These must be ordered so that each element is contiguous with
+        // the elements before and after it.
         (Vec2::new(0.0, 0.0), 0.0, square.clone()),
         (Vec2::new(0.0, -BRICK_DIM), 0.0, square.clone()),
         (Vec2::new(0.0, -2.0 * BRICK_DIM), 0.0, square.clone()),
@@ -48,10 +63,11 @@ pub fn spawn_lblock(mut commands: Commands) {
         .spawn(RigidBody::Dynamic)
         .insert(Sleeping::default())
         .with_children(|children| {
-            lblock_components.into_iter().for_each(
-                |(Vec2 { x, y }, shape)| {
+            lblock_components.into_iter().enumerate().for_each(
+                |(i, (Vec2 { x, y }, shape))| {
                     children
                         .spawn(shape)
+                        //.insert(ContiguityIndex(i))
                         .insert(ActiveTetroidCollider)
                         .insert(Tetroid)
                         .insert(TransformBundle::from(Transform::from_xyz(
@@ -70,7 +86,9 @@ pub fn spawn_lblock(mut commands: Commands) {
             );
         })
         .insert(TransformBundle::from(Transform::from_xyz(
-            -BRICK_DIM, GROUND_Y + BRICK_DIM * 21.0, 0.0,
+            -BRICK_DIM,
+            GROUND_Y + BRICK_DIM * 21.0,
+            0.0,
         )))
         .insert(ExternalImpulse {
             impulse: Vec2::new(0.0, 0.0),
