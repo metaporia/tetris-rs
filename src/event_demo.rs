@@ -58,6 +58,24 @@ const VELOCITY: Velocity = Velocity {
 pub(crate) const GROUND_Y: f32 = -BRICK_DIM * 18.0 / 2.0;
 
 pub fn app() {
+    let v1 = vec![
+        Vec2::new(-8.937691, -151.03055),
+        Vec2::new(-34.141174, -167.30275),
+        Vec2::new(-17.868977, -192.50623),
+        Vec2::new(7.334507, -176.23404),
+    ];
+    let v2 = vec![
+        Vec2::new(-34.141174, -167.30275),
+        Vec2::new(-59.344658, -183.57495),
+        Vec2::new(-43.07246, -208.77843),
+        Vec2::new(-17.868977, -192.50623),
+    ];
+
+    //println!(
+    //    "TEST-- any adjacent points: {:?}",
+    //    any_shared_point(&v1, &v2)
+    //);
+
     App::new()
         .add_event::<Freeze>()
         .add_event::<UnFreeze>()
@@ -142,10 +160,10 @@ pub fn app() {
                 render_row_density,
             ),
         )
-        //        .add_systems(Startup, setup_physics)
-        //.add_systems(Update, kbd_input)
-        //.add_systems(Update, tetroid_spawner)
-        .run();
+    //        .add_systems(Startup, setup_physics)
+    //.add_systems(Update, kbd_input)
+    //.add_systems(Update, tetroid_spawner)
+    .run();
 }
 
 fn setup_graphics(mut commands: Commands) {
@@ -589,7 +607,7 @@ fn partitions(
         //let global_transform = global_transforms.get(*id).unwrap();
         let mut in_row = colliders_in_row(row, colliders.iter());
         if !in_row.is_empty() && !rows_to_slice.is_empty() {
-            dbg!(&row, &in_row);
+            // dbg!(&row, &in_row);
         }
 
         // TODO: skip calculation when not slicing current row
@@ -656,7 +674,7 @@ fn partitions(
         });
 
         if rows_to_slice.contains(&row) {
-            dbg!(&row, &rows_to_slice);
+            // dbg!(&row, &rows_to_slice);
         }
 
         // Calculate density
@@ -812,7 +830,7 @@ fn partitions(
                                             ActiveTetroidCollider,
                                         ))
                                         .id();
-                                    dbg!(id);
+                                    //dbg!(id);
                                 })
                             })
                             .id();
@@ -880,10 +898,11 @@ fn partitions(
 fn any_shared_point(ls: &[Vec2], rs: &[Vec2]) -> bool
 where
 {
-    let max_error = 0.01;
+    let max_error = 0.1;
     ls.iter().any(|l| {
         rs.iter().any(|r| {
-            (r.y - l.y).abs() <= max_error && (r.x - l.y).abs() <= max_error
+            ((r.y - l.y).abs() <= max_error)
+                && ((r.x - l.x).abs() <= max_error)
         })
     })
 }
@@ -898,6 +917,7 @@ fn group_hulls(hulls: Vec<ConvexHull>) -> HashMap<usize, Vec<ConvexHull>> {
         for (id, mut group) in groups.iter_mut() {
             for h in group.iter() {
                 if any_shared_point(&hull, h) {
+                    warn!("Shared point");
                     in_group = Some(*id);
                 }
             }
@@ -917,6 +937,7 @@ fn group_hulls(hulls: Vec<ConvexHull>) -> HashMap<usize, Vec<ConvexHull>> {
                 }
             }
         }
+        in_group = None;
     }
 
     groups
