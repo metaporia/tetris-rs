@@ -100,6 +100,7 @@ pub fn spawn_density_indicator_column(
 
     commands
         .spawn(DensityIndicatorColumn)
+        .insert(InheritedVisibility::VISIBLE)
         .insert(transform_bundle)
         .with_children(|column| {
             for row in 0..ROWS {

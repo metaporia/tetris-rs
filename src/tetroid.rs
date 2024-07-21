@@ -70,9 +70,7 @@ pub fn spawn_lblock(mut commands: Commands) {
                         //.insert(ContiguityIndex(i))
                         .insert(ActiveTetroidCollider)
                         .insert(Tetroid)
-                        .insert(TransformBundle::from(Transform::from_xyz(
-                            x, y, 0.0,
-                        )))
+                        .insert(TransformBundle::from(Transform::from_xyz( x, y, 0.0,)))
                         .insert(ActiveEvents::COLLISION_EVENTS)
                         .insert(Friction {
                             coefficient: 0.0,

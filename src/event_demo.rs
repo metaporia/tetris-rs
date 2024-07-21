@@ -40,7 +40,7 @@ struct Freeze;
 struct UnFreeze;
 
 #[derive(Event, Debug)]
-struct DeactivateTetroid(Entity);
+struct DeactivateTetroid;
 
 #[derive(Event, Debug)]
 struct SpawnTetroid;
@@ -58,24 +58,6 @@ const VELOCITY: Velocity = Velocity {
 pub(crate) const GROUND_Y: f32 = -BRICK_DIM * 18.0 / 2.0;
 
 pub fn app() {
-    let v1 = vec![
-        Vec2::new(-8.937691, -151.03055),
-        Vec2::new(-34.141174, -167.30275),
-        Vec2::new(-17.868977, -192.50623),
-        Vec2::new(7.334507, -176.23404),
-    ];
-    let v2 = vec![
-        Vec2::new(-34.141174, -167.30275),
-        Vec2::new(-59.344658, -183.57495),
-        Vec2::new(-43.07246, -208.77843),
-        Vec2::new(-17.868977, -192.50623),
-    ];
-
-    //println!(
-    //    "TEST-- any adjacent points: {:?}",
-    //    any_shared_point(&v1, &v2)
-    //);
-
     App::new()
         .add_event::<Freeze>()
         .add_event::<UnFreeze>()
@@ -160,10 +142,10 @@ pub fn app() {
                 render_row_density,
             ),
         )
-    //        .add_systems(Startup, setup_physics)
-    //.add_systems(Update, kbd_input)
-    //.add_systems(Update, tetroid_spawner)
-    .run();
+        //        .add_systems(Startup, setup_physics)
+        //.add_systems(Update, kbd_input)
+        //.add_systems(Update, tetroid_spawner)
+        .run();
 }
 
 fn setup_graphics(mut commands: Commands) {
@@ -234,48 +216,6 @@ fn tetroid_hit_compound(
     }
 }
 
-//
-fn tetroid_hit(
-    mut freezes: EventWriter<Freeze>,
-    mut collisions: EventReader<CollisionEvent>,
-    active_tetroid: Query<Entity, With<ActiveTetroid>>,
-    ground: Query<Entity, With<Ground>>,
-    tetroids: Query<Entity, With<Tetroid>>,
-    rc: Res<RapierContext>,
-) {
-    if let Ok(at) = active_tetroid.get_single() {
-        let ground = ground.single();
-        for e in collisions.read() {
-            // if active tetroid hits any TetroidStuff or Ground
-            if let CollisionEvent::Started(a, b, _) = e {
-                //if let Some(parent) = rc.collider_parent(*a) { }
-                // - determine if one collider is the ground or a tetroid
-                // - determine if (and then which) collider is a child of the
-                //   active tetroid
-
-                let mut other = *a;
-                if at == *a {
-                    other = *b;
-                } else if at == *b {
-                    other = *a;
-                } else {
-                    return;
-                }
-                if other == ground {
-                    info!("hit ground: Freeze: {:?}, {:?}", a, b);
-                    freezes.send(Freeze);
-                } else if tetroids.contains(other) {
-                    info!(
-                        "hit tetroid stuff/debris: Freeze: {:?}, {:?}",
-                        a, b
-                    );
-                    freezes.send(Freeze);
-                }
-            }
-        }
-    }
-}
-
 fn freeze(
     mut cmds: Commands,
     mut tetroids: Query<
@@ -289,7 +229,7 @@ fn freeze(
         //dbg!("in freeze, {}", tetroids.iter().len());
         for (entity, mut vel, mut gravity, mut sleeping) in tetroids.iter_mut()
         {
-            //sleeping.sleeping = true;
+            sleeping.sleeping = true;
 
             //info!("Freezing all tetroids, id: {:?}, {:?}", entity, sleeping);
             *vel = Velocity::zero();
@@ -333,7 +273,7 @@ fn deactivate_tetroid(
             }
 
             info!("DeactivateTetroid({:?})", at);
-            deactivate.send(DeactivateTetroid(at));
+            deactivate.send(DeactivateTetroid);
         }
         freeze.clear();
     }
@@ -576,7 +516,6 @@ fn partitions(
     children: Query<&Children>,
     colliders: Query<(Entity, &Collider, &GlobalTransform), With<Tetroid>>,
     global_transforms: Query<&GlobalTransform>,
-    mut freeze: EventReader<Freeze>,
     mut slices: EventReader<SliceRow>,
     mut densities: EventWriter<RowDensity>,
     parents: Query<&Parent>,
@@ -606,8 +545,8 @@ fn partitions(
     for row in 0..ROWS {
         //let global_transform = global_transforms.get(*id).unwrap();
         let mut in_row = colliders_in_row(row, colliders.iter());
-        if !in_row.is_empty() && !rows_to_slice.is_empty() {
-            // dbg!(&row, &in_row);
+        if !in_row.is_empty() && !rows_to_slice.is_empty() && row == 0 {
+            dbg!(&row, &in_row);
         }
 
         // TODO: skip calculation when not slicing current row
@@ -680,7 +619,11 @@ fn partitions(
         // Calculate density
         let total_area = f32::from(COLUMNS) * BRICK_DIM * BRICK_DIM;
         let density = area / total_area;
-        densities.send(RowDensity { row, density });
+        let rd = RowDensity { row, density };
+        if density > 0.0 {
+            //dbg!(&rd);
+        }
+        densities.send(rd);
     }
 
     // NOTE: so bloody inelegant but this is a prototype after all:
@@ -688,9 +631,6 @@ fn partitions(
     //   before trying to execute the `SliceRow`s
     for row in 0..ROWS {
         let mut in_row = colliders_in_row(row, colliders.iter());
-        if !in_row.is_empty() && !rows_to_slice.is_empty() {
-            dbg!(&row, &in_row);
-        }
 
         // TODO: skip calculation when not slicing current row
         let parents_in_row = children_to_unique_parents(
@@ -701,20 +641,13 @@ fn partitions(
 
         // Slice logic
         if rows_to_slice.contains(&row) {
-            // FIXME: I forgot that above & below colliders must be attached
-            // to separate rigidbodies if they aren't connected
-            //
             let mut hull_to_collider =
                 |hull: &ConvexHull| Collider::convex_hull(hull).unwrap();
             for parent in parents_in_row {
                 // for each partent, get children, lookup (child_id, row) in
                 // partitions and collect ConvexHulls
-                //
                 // - group children into above, within, below
-
-                // lists of Result<Collider, Entity>:
                 // - colliders are new and should be spawned under a rigidbody
-                // - entities have existing colliders and can be reparented
                 let mut above = vec![];
                 let mut within = vec![];
                 let mut below = vec![];
@@ -732,10 +665,7 @@ fn partitions(
                         let is_child_in_row =
                             in_row.iter().map(|(id, _)| id).contains(&child);
                         if !rows_to_slice.is_empty() {
-                            info!(
-                                "row: {:?}, is_child_in_row: {:?}, id: {:?}",
-                                &row, &is_child_in_row, &child
-                            );
+                            //info!( "row: {:?}, is_child_in_row: {:?}, id: {:?}", &row, &is_child_in_row, &child);
                         }
 
                         let rows = entries
@@ -756,24 +686,18 @@ fn partitions(
                                 //draw_convex_hull( cmds.reborrow(), hull.clone(), color,);
                                 match Ord::cmp(&row, collider_row) {
                                     Ordering::Greater => {
-                                        info!("above");
                                         above.push(hull.clone());
                                     }
                                     Ordering::Equal => {
-                                        info!("within");
                                         within.push(hull.clone());
                                     }
                                     Ordering::Less => {
-                                        info!("below");
                                         below.push(hull.clone());
                                     }
                                 }
                             } else if let Ok((_, col, transform)) =
                                 colliders.get(child)
                             {
-                                // child not in row, push existing collider
-                                // ids. We can reparent these
-                                warn!("child not in row: {}", row);
                                 let view = col.as_convex_polygon().unwrap();
                                 let global_points: Vec<Vec2> = view
                                     .points()
@@ -785,15 +709,12 @@ fn partitions(
                                 //draw_convex_hull( cmds.reborrow(), global_points, color,);
                                 match Ord::cmp(&row, collider_row) {
                                     Ordering::Greater => {
-                                        info!("above");
                                         above.push(global_points);
                                     }
                                     Ordering::Equal => {
-                                        info!("within");
                                         within.push(global_points);
                                     }
                                     Ordering::Less => {
-                                        info!("below");
                                         below.push(global_points);
                                     }
                                 }
@@ -802,32 +723,33 @@ fn partitions(
                     }
                 }
 
-                //dbg!(&above, &below);
-                // - despawn old parent body, child bodies
-                // - spawn new bodies for above, below:
-                // spawn above
-                //if true {
                 if !above.is_empty() {
                     let groups =
                         group_hulls(above).into_values().map(|group| {
                             group.into_iter().map(|h| hull_to_collider(&h))
                         });
-                    dbg!(groups.len());
                     for group in groups {
                         let id = cmds
                             .spawn(RigidBody::Dynamic)
-                            .insert(TransformBundle::from(
-                                Transform::from_xyz(0.0, 0.0, 0.0),
-                            ))
+                            .insert(Sleeping::default())
+                            .insert(TransformBundle::default())
+                            .insert(ExternalImpulse::default())
+                            .insert(Velocity::default())
+                            .insert(Ccd::enabled())
+                            .insert(GravityScale(1.0))
+                            .insert(TransformBundle::default())
                             .insert(Tetroid)
                             .with_children(|children| {
                                 println!("spawining above");
+                                assert!(group.len() >= 1);
                                 group.into_iter().for_each(|col| {
                                     let id = children
                                         .spawn(col)
                                         .insert((
                                             Tetroid,
+                                            TransformBundle::IDENTITY,
                                             ActiveTetroidCollider,
+                                            ActiveEvents::COLLISION_EVENTS,
                                         ))
                                         .id();
                                     //dbg!(id);
@@ -836,27 +758,6 @@ fn partitions(
                             .id();
                     }
                 }
-                //info!("above body id: {:?}", &id);
-                // spawn below
-                //if !within.is_empty() {
-                //if false {
-                //    let groups = group_hulls(above)
-                //        .into_values()
-                //        .map(|group| group.into_iter().map(hull_to_collider));
-                //    for group in groups {
-                //        cmds.spawn(RigidBody::Dynamic)
-                //            .insert(Tetroid)
-                //            .with_children(|children| {
-                //                println!("spawining within");
-                //                group.into_iter().for_each(|col| {
-                //                    children.spawn(col).insert((
-                //                        Tetroid,
-                //                        ActiveTetroidCollider,
-                //                    ));
-                //                })
-                //            });
-                //    }
-                //}
 
                 // spawn below
                 if !below.is_empty() {
@@ -866,16 +767,27 @@ fn partitions(
                         });
                     for group in groups {
                         cmds.spawn(RigidBody::Dynamic)
+                            .insert(Sleeping::default())
+                            .insert(TransformBundle::default())
+                            .insert(ExternalImpulse::default())
+                            .insert(Sleeping::default())
+                            .insert(Ccd::enabled())
+                            .insert(Velocity::default())
+                            .insert(GravityScale(1.0))
                             .insert(Tetroid)
                             .with_children(|children| {
                                 println!("spawining below");
+                                assert!(group.len() >= 1);
                                 group.into_iter().for_each(|col| {
                                     children.spawn(col).insert((
                                         Tetroid,
+                                        TransformBundle::IDENTITY,
+                                        ActiveEvents::COLLISION_EVENTS,
                                         ActiveTetroidCollider,
                                     ));
                                 })
-                            });
+                            })
+                            .log_components();
                     }
                 }
 
@@ -883,6 +795,14 @@ fn partitions(
                 cmds.entity(parent).despawn_recursive();
                 //}
             }
+            // TODO:
+            // [ ] sort out event order for spawning blocks (relying on
+            //     hacky freeze trigger)--it seems to hang after only triggered
+            //     `SliceRow`s
+            // [ ] replace spawn_lblock with spawn_random_block
+            // [ ] try to load in mesh
+            //
+            //spawn_lblock(cmds.reborrow());
         }
     }
 
@@ -917,7 +837,6 @@ fn group_hulls(hulls: Vec<ConvexHull>) -> HashMap<usize, Vec<ConvexHull>> {
         for (id, mut group) in groups.iter_mut() {
             for h in group.iter() {
                 if any_shared_point(&hull, h) {
-                    warn!("Shared point");
                     in_group = Some(*id);
                 }
             }
@@ -943,8 +862,12 @@ fn group_hulls(hulls: Vec<ConvexHull>) -> HashMap<usize, Vec<ConvexHull>> {
     groups
 }
 
-fn send_slice(mut slices: EventWriter<SliceRow>) {
-    slices.send(SliceRow { row: 2 });
+fn send_slice(
+    mut slices: EventWriter<SliceRow>,
+    mut unfreeze: EventWriter<UnFreeze>,
+) {
+    slices.send(SliceRow { row: 0 });
+    unfreeze.send(UnFreeze);
 }
 
 /// Check for rows above the density threshhold (0.9) and if so send `SliceRow`
@@ -954,11 +877,13 @@ fn send_slice(mut slices: EventWriter<SliceRow>) {
 /// `SliceRow`, partitions can apply it on the next `Update`.
 fn check_row_densities(
     mut densities: EventReader<RowDensity>,
+    mut deactivate: EventWriter<DeactivateTetroid>,
     mut slices: EventWriter<SliceRow>,
 ) {
     densities.read().for_each(|rd| {
-        if rd.density >= 0.9 {
+        if rd.density >= 0.7 {
             slices.send(SliceRow { row: rd.row });
+            deactivate.send(DeactivateTetroid);
         }
     })
 }
@@ -989,8 +914,6 @@ fn row_intersections(
     mut cmds: Commands,
     rc: Res<RapierContext>,
     tetroids: Query<Entity, (With<Tetroid>, With<Collider>)>,
-    mut freeze: EventReader<Freeze>,
-
     colliders: Query<&Collider, With<Tetroid>>,
     global_transforms: Query<&GlobalTransform, With<Collider>>,
 ) {
