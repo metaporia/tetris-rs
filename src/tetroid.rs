@@ -1,6 +1,6 @@
 // tetroid.rs
 
-use bevy::prelude::*;
+use bevy::{prelude::*, utils::tracing::subscriber::DefaultGuard};
 use bevy_rapier2d::prelude::*;
 
 pub mod components;
@@ -20,7 +20,7 @@ pub(crate) struct TetrominoBundle {
     external_impulse: ExternalImpulse,
     pub velocity: Velocity,
     pub gravity_scale: GravityScale,
-    tetroid: Tetroid
+    tetroid: Tetroid,
 }
 
 impl TetrominoBundle {
@@ -37,27 +37,51 @@ impl TetrominoBundle {
 /// Common components of `TetroidCollider`. Provides default `TransformBundle`,
 /// collision events, and necessary marker components for a child collider of a
 /// `Tetromino`
-#[derive(Bundle)]
-pub(crate ) struct TetroidColliderBundle {
+#[derive(Bundle, Default)]
+pub(crate) struct TetroidColliderBundle {
     tetroid: Tetroid,
     /// FIXME: test if both child and parent need this
-    pub transform_bundle: TransformBundle, 
+    pub transform_bundle: TransformBundle,
     active_events: ActiveEvents,
     collider: Collider,
+    friction: Friction,
+    restitution: Restitution,
 }
-
 
 impl TetroidColliderBundle {
     /// Creates `TetroidColliderBundle` from `Collider`.
     ///
     /// It is assumed that `Collider` is a `Collider::convex_hull`.
-    pub(crate) fn new(collider: Collider) -> Self {
+    pub(crate) fn new(collider: Collider, friction_coefficient: f32) -> Self {
         TetroidColliderBundle {
             collider,
             tetroid: Tetroid,
             transform_bundle: TransformBundle::IDENTITY,
             active_events: ActiveEvents::COLLISION_EVENTS,
+            friction: Friction {
+                coefficient: friction_coefficient,
+                combine_rule: CoefficientCombineRule::Min,
+            },
+            restitution: Restitution {
+                coefficient: 0.0,
+                combine_rule: CoefficientCombineRule::Min,
+            },
         }
+    }
+
+    // TODO: use builder pattern. These duplicate initialization of several
+    // components.
+    //
+    /// Add friction
+    pub(crate) fn with_friction(mut self, friction_coefficient: f32) -> Self {
+        self.friction.coefficient = friction_coefficient;
+        self
+    }
+
+    /// Initialize starting position with global x,y coordinates.
+    pub(crate) fn with_starting_position(mut self, x: f32, y: f32) -> Self {
+        self.transform_bundle.local = Transform::from_xyz(x, y, 0.0);
+        self
     }
 }
 
@@ -97,48 +121,85 @@ pub fn spawn_lblock(mut commands: Commands) {
         (Vec2::new(BRICK_DIM, -2.0 * BRICK_DIM), square.clone()),
     ];
 
-    let id = commands
-        .spawn(RigidBody::Dynamic)
-        .insert(Sleeping::default())
-        .with_children(|children| {
-            lblock_components.into_iter().enumerate().for_each(
-                |(i, (Vec2 { x, y }, shape))| {
-                    children
-                        .spawn(shape)
-                        .insert(ActiveTetroidCollider)
-                        .insert(Tetroid)
-                        .insert(TransformBundle::from(Transform::from_xyz( x, y, 0.0,)))
-                        .insert(ActiveEvents::COLLISION_EVENTS)
-                        .insert(Friction {
-                            coefficient: 0.0,
-                            combine_rule: CoefficientCombineRule::Min,
-                        })
-                        .insert(Restitution {
-                            coefficient: 0.0,
-                            combine_rule: CoefficientCombineRule::Min,
-                        });
-                },
-            );
-        })
-        .insert(TransformBundle::from(Transform::from_xyz(
+    // active tetroid gets lower gravity
+    let mut tetromino_bundle = TetrominoBundle {
+        gravity_scale: GravityScale(0.2),
+        velocity: Velocity {
+            linvel: Vec2::new(0.0, -120.0),
+            angvel: 0.0,
+        },
+        transform_bundle: TransformBundle::from(Transform::from_xyz(
             -BRICK_DIM,
             GROUND_Y + BRICK_DIM * 21.0,
             0.0,
-        )))
-        .insert(ExternalImpulse {
-            impulse: Vec2::new(0.0, 0.0),
-            torque_impulse: 0.0,
-        })
-        //.insert(ActiveEvents::COLLISION_EVENTS)
-        .insert(Ccd::enabled()) // enable continous collision detection
+        )),
+        ..Default::default()
+    };
+
+    let id2 = commands
+        .spawn(tetromino_bundle)
         .insert(ActiveTetroid)
-        .insert(Tetroid)
-        .insert(Velocity {
-            linvel: Vec2::new(0.0, -120.0),
-            angvel: 0.0,
+        .with_children(|children| {
+            lblock_components.clone().into_iter().for_each(
+                |(Vec2 { x, y }, collider)| {
+                    let mut collider_bundle = TetroidColliderBundle {
+                        collider,
+                        ..Default::default()
+                    }
+                    .with_friction(0.3)
+                    .with_starting_position(x, y);
+                    children
+                        .spawn(collider_bundle)
+                        .insert(ActiveTetroidCollider);
+                },
+            )
         })
-        .insert(GravityScale(0.02))
         .id();
-    //commands.entity(id).log_components();
-    info!("Spawned new lblock: {:?}", id);
+
+    //let id = commands
+    //    .spawn(RigidBody::Dynamic)
+    //    .insert(Sleeping::default())
+    //    .with_children(|children| {
+    //        lblock_components.into_iter().for_each(
+    //            |(Vec2 { x, y }, shape)| {
+    //                children
+    //                    .spawn(shape)
+    //                    .insert(ActiveTetroidCollider)
+    //                    .insert(Tetroid)
+    //                    .insert(TransformBundle::from(Transform::from_xyz(
+    //                        x, y, 0.0,
+    //                    )))
+    //                    .insert(ActiveEvents::COLLISION_EVENTS)
+    //                    .insert(Friction {
+    //                        coefficient: 0.0,
+    //                        combine_rule: CoefficientCombineRule::Min,
+    //                    })
+    //                    .insert(Restitution {
+    //                        coefficient: 0.0,
+    //                        combine_rule: CoefficientCombineRule::Min,
+    //                    });
+    //            },
+    //        );
+    //    })
+    //    .insert(TransformBundle::from(Transform::from_xyz(
+    //        -BRICK_DIM,
+    //        GROUND_Y + BRICK_DIM * 21.0,
+    //        0.0,
+    //    )))
+    //    .insert(ExternalImpulse {
+    //        impulse: Vec2::new(0.0, 0.0),
+    //        torque_impulse: 0.0,
+    //    })
+    //    //.insert(ActiveEvents::COLLISION_EVENTS)
+    //    .insert(Ccd::enabled()) // enable continous collision detection
+    //    .insert(ActiveTetroid)
+    //    .insert(Tetroid)
+    //    .insert(Velocity {
+    //        linvel: Vec2::new(0.0, -120.0),
+    //        angvel: 0.0,
+    //    })
+    //    .insert(GravityScale(0.02))
+    //    .id();
+    commands.entity(id2).log_components();
+    info!("Spawned new lblock: {:?}", id2);
 }

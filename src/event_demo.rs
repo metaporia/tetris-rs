@@ -767,7 +767,7 @@ fn spawn_hull_groups(mut cmds: Commands, convex_hulls: Vec<Vec<Vec2>>) {
         cmds.spawn(TetrominoBundle::new(1.0))
             .with_children(|children| {
                 colliders.for_each(|col| {
-                    children.spawn(TetroidColliderBundle::new(col));
+                    children.spawn(TetroidColliderBundle::new(col, 0.3));
                 })
             });
     }
