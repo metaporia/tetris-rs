@@ -5,7 +5,7 @@ use bevy_rapier2d::prelude::*;
 
 pub mod components;
 
-use crate::event_demo::{Tetroid, GROUND_Y};
+use crate::event_demo::{Tetroid, GROUND_Y, FRICTION};
 use components::*;
 
 pub const BRICK_DIM: f32 = 30.0;
@@ -142,7 +142,7 @@ pub fn spawn_lblock(mut commands: Commands) {
         .with_children(|children| {
             lblock_components.clone().into_iter().for_each(
                 |(Vec2 { x, y }, collider)| {
-                    let mut collider_bundle = TetroidColliderBundle {
+                    let collider_bundle = TetroidColliderBundle {
                         collider,
                         ..Default::default()
                     }
@@ -200,6 +200,6 @@ pub fn spawn_lblock(mut commands: Commands) {
     //    })
     //    .insert(GravityScale(0.02))
     //    .id();
-    commands.entity(id2).log_components();
+    //commands.entity(id2).log_components();
     info!("Spawned new lblock: {:?}", id2);
 }

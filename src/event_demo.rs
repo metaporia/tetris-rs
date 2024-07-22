@@ -7,17 +7,15 @@
 //! `Unfreeze` sends, the physics simulation unpauses, and `SpawnTetroid` is
 //! sent.
 
-use crate::{
-    draw_circle_contact, draw_ray, draw_vertices, spawn_convex_hull, Pause,
-};
+use crate::{draw_ray, Pause};
 use bevy::input::common_conditions::input_just_pressed;
+use bevy::log::{Level, LogPlugin};
 use bevy::utils::HashMap;
 use bevy::{prelude::*, window::WindowResolution};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_prototype_lyon::entity::Path;
 use bevy_prototype_lyon::plugin::ShapePlugin;
 use bevy_rapier2d::prelude::*;
-use bevy_rapier2d::rapier::geometry::BroadPhase;
 
 use itertools::Itertools;
 use std::cmp::Ordering;
@@ -31,10 +29,7 @@ use crate::tetroid::{
     components::*, spawn_lblock, TetroidColliderBundle, TetrominoBundle,
     BRICK_DIM,
 };
-use crate::{
-    cast_rays_compound, draw_convex_hull, kbd_input, sort_convex_hull,
-    v2_to_3, v3_to_2,
-};
+use crate::{draw_convex_hull, kbd_input, sort_convex_hull, v2_to_3, v3_to_2};
 
 #[derive(Event, Debug)]
 struct Freeze;
@@ -46,7 +41,7 @@ struct UnFreeze;
 struct DeactivateTetroid;
 
 #[derive(Event, Debug)]
-struct SpawnTetroid;
+struct SpawnNextTetroid;
 
 #[derive(Component, Debug, Default)]
 pub(crate) struct Tetroid;
@@ -57,41 +52,48 @@ const VELOCITY: Velocity = Velocity {
     linvel: Vec2::new(0.0, -100.0),
     angvel: 0.0,
 };
-const FRICTION: f32 = 0.3;
+pub(crate) const FRICTION: f32 = 0.3;
 
 pub(crate) const GROUND_Y: f32 = -BRICK_DIM * 18.0 / 2.0;
 
 pub fn app() {
-    App::new()
+    let mut app = App::new();
+    app
         .add_event::<Freeze>()
         .add_event::<UnFreeze>()
         .add_event::<DeactivateTetroid>()
         .add_event::<Pause>()
         .add_event::<RowDensity>()
         .add_event::<SliceRow>()
+        .add_event::<SpawnNextTetroid>()
+        .add_event::<DespawnTetromino>()
         .insert_resource(HitMap::default())
         .insert_resource(Partitions::default())
         .insert_resource(RowDensityIndicatorMap::default())
         .add_plugins(
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Not Tetris".into(),
-                    name: Some("tetris-rs".into()),
-                    // FIXME: fix ground alignment
-                    resolution: WindowResolution::new(
-                        BRICK_DIM * 9.0,
-                        BRICK_DIM * 13.0,
-                    )
-                    .with_scale_factor_override(1.0),
+            DefaultPlugins.build()
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Not Tetris".into(),
+                        name: Some("tetris-rs".into()),
+                        // FIXME: fix ground alignment
+                        resolution: WindowResolution::new(
+                            BRICK_DIM * 9.0,
+                            BRICK_DIM * 13.0,
+                        )
+                        .with_scale_factor_override(1.0),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                //.disable::<LogPlugin>()
+                .set(LogPlugin {
+                    //filter: "tetris-rs=debug,bevy_ecs=debug".to_string(),
                     ..Default::default()
                 }),
-                ..Default::default()
-            }),
         )
-        //.insert_resource(GizmoConfig {
-        //    depth_bias: -1.0,
-        //    ..Default::default()
-        //})
+        // Schedule graph
+        //.add_plugins(bevy_mod_debugdump::CommandLineArgs)
         // Physics plugins
         .add_plugins(WorldInspectorPlugin::new())
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(
@@ -131,6 +133,7 @@ pub fn app() {
                     (
                         row_intersections,
                         partitions,
+                        despawn_tetrominos,
                         clear_hit_map,
                         clear_partition_map,
                         check_row_densities,
@@ -141,6 +144,8 @@ pub fn app() {
                     unfreeze, // TODO consolidate unfreeze and handle_unfreeze
                     handle_unfreeze,
                     block_spawner,
+                    //check_for_active_tetroid
+                    list_active_tetroid,
                 )
                     .chain(),
                 render_row_density,
@@ -149,7 +154,11 @@ pub fn app() {
         //        .add_systems(Startup, setup_physics)
         //.add_systems(Update, kbd_input)
         //.add_systems(Update, tetroid_spawner)
-        .run();
+    ;
+
+    //bevy_mod_debugdump::print_schedule_graph(&mut app, Update);
+
+    app.run();
 }
 
 fn setup_graphics(mut commands: Commands) {
@@ -160,7 +169,6 @@ fn setup_graphics(mut commands: Commands) {
 /// Send `Freeze` event if active tetroid hits ground or other tetroid.
 fn tetroid_hit_compound(
     mut freezes: EventWriter<Freeze>,
-    mut collisions: EventReader<CollisionEvent>,
     children: Query<&Children>,
     active_tetroid: Query<Entity, With<ActiveTetroid>>,
     ground: Query<Entity, With<Ground>>,
@@ -172,8 +180,8 @@ fn tetroid_hit_compound(
     let ground = ground.single();
     // for each collider of the active tetroid check contactt
     if let Ok(at) = active_tetroid.get_single() {
-        for child in children.iter_descendants(at) {
-            for contact in rc.contact_pairs_with(child) {
+        let any_hits = children.iter_descendants(at).any(|child| {
+            rc.contact_pairs_with(child).any(|contact| {
                 if contact.has_any_active_contact() {
                     // determine which collider handle is `child`
                     let other = if contact.collider1() == child {
@@ -182,19 +190,22 @@ fn tetroid_hit_compound(
                         contact.collider1()
                     };
                     // check if `other` is `ground`
-                    if tetroids.contains(other) || other == ground {
-                        //dbg!(at, child, other);
-                        info!("Freeze");
-                        freezes.send(Freeze);
-                    }
+                    tetroids.contains(other) || other == ground
+                } else {
+                    false
                 }
-            }
+            })
+        });
+        if any_hits {
+            info!("Freeze");
+            freezes.send(Freeze);
         }
     }
 }
 
+/// On ground contact remove all velocity & gravity for ActiveTetroid, remove
+/// ActiveTetroid from entity
 fn freeze(
-    mut cmds: Commands,
     mut tetroids: Query<
         (Entity, &mut Velocity, &mut GravityScale, &mut Sleeping),
         With<Tetroid>,
@@ -216,7 +227,6 @@ fn freeze(
 }
 
 fn handle_unfreeze(
-    mut cmds: Commands,
     mut tetroids: Query<
         (Entity, &mut Velocity, &mut GravityScale, &mut Sleeping),
         With<Tetroid>,
@@ -226,8 +236,7 @@ fn handle_unfreeze(
     if !unfreeze.is_empty() {
         unfreeze.clear();
         //dbg!("in freeze, {}", tetroids.iter().len());
-        for (entity, mut vel, mut gravity, mut sleeping) in tetroids.iter_mut()
-        {
+        for (entity, mut vel, mut gravity, sleeping) in tetroids.iter_mut() {
             //sleeping.sleeping = true;
 
             //info!("Freezing all tetroids, id: {:?}, {:?}", entity, sleeping);
@@ -236,6 +245,7 @@ fn handle_unfreeze(
         }
     }
 }
+
 fn deactivate_tetroid(
     mut cmds: Commands,
     mut active_tetroid: Query<(Entity, &Children), With<ActiveTetroid>>,
@@ -269,9 +279,14 @@ fn unfreeze(
     }
 }
 
-fn block_spawner(mut cmds: Commands, mut freeze: EventReader<Freeze>) {
-    if !freeze.is_empty() {
+fn block_spawner(
+    mut cmds: Commands,
+    mut freeze: EventReader<Freeze>,
+    mut next_tetroid: EventReader<SpawnNextTetroid>,
+) {
+    if !freeze.is_empty() || !next_tetroid.is_empty() {
         freeze.clear();
+        next_tetroid.clear();
         spawn_lblock(cmds.reborrow());
     }
 }
@@ -331,7 +346,7 @@ fn colliders_in_row<'a>(
         .into_iter()
         .filter_map(|(e, c, t)| c.as_convex_polygon().map(|view| (e, view, t)))
         .for_each(|(id, view, t)| {
-            let mut ps: Vec<Vec2> = view
+            let ps: Vec<Vec2> = view
                 .points()
                 .map(|p| v3_to_2(&t.transform_point(v2_to_3(&p))))
                 .collect();
@@ -394,7 +409,7 @@ pub(crate) const COLUMNS: u8 = 10;
 struct RowIntersections(HitMap);
 
 fn clear_hit_map(
-    mut unfreeze: EventReader<UnFreeze>,
+    //mut unfreeze: EventReader<UnFreeze>,
     mut hitmap: ResMut<HitMap>,
 ) {
     //if !unfreeze.is_empty() {
@@ -404,7 +419,7 @@ fn clear_hit_map(
 }
 
 fn clear_partition_map(
-    mut unfreeze: EventReader<UnFreeze>,
+    //mut unfreeze: EventReader<UnFreeze>,
     mut partition: ResMut<Partitions>,
 ) {
     //if !unfreeze.is_empty() {
@@ -486,7 +501,7 @@ struct Partitions(HashMap<Entity, Vec<(Row, ConvexHull)>>);
 
 fn partitions(
     mut partitions: ResMut<Partitions>,
-    mut hitmap: ResMut<HitMap>,
+    hitmap: ResMut<HitMap>,
     mut cmds: Commands,
     rc: Res<RapierContext>,
     tetroids: Query<Entity, (With<Tetroid>, With<RigidBody>)>,
@@ -496,6 +511,8 @@ fn partitions(
     mut slices: EventReader<SliceRow>,
     mut densities: EventWriter<RowDensity>,
     parents: Query<&Parent>,
+    mut freeze: EventReader<Freeze>,
+    mut despawn: EventWriter<DespawnTetromino>,
 ) {
     //if freeze.is_empty() {
     //    return;
@@ -517,12 +534,13 @@ fn partitions(
         .sorted()
         .dedup()
         .collect();
+    slices.clear();
 
     // populate partitions from `HitMap`
     for row in 0..ROWS {
-        let mut in_row = colliders_in_row(row, colliders.iter());
+        let in_row = colliders_in_row(row, colliders.iter());
         if !in_row.is_empty() && !rows_to_slice.is_empty() && row == 0 {
-            dbg!(&row, &in_row);
+            //dbg!(&row, &in_row);
         }
 
         // TODO: skip calculation when not slicing current row
@@ -564,16 +582,13 @@ fn partitions(
             // FIXME: handles row 0 differently, crashes on all other rows in
             // `colliders_in_row` because there is a collider missing a
             // `GlobalTransform`
-            if let Some(mut row_entries) = partitions.0.get_mut(&id) {
+            if let Some(row_entries) = partitions.0.get_mut(&id) {
                 // NOTE: overwrite/ignore possibly existing entry for current
                 // entity as there can (should, rather) be only one of a given
                 // collider per row
                 row_entries.push((row, points.clone()))
             } else {
                 let v = vec![(row, points.clone())];
-                if !rows_to_slice.is_empty() {
-                    //dbg!(&v);
-                }
                 partitions.0.insert(id, v);
             }
 
@@ -583,14 +598,7 @@ fn partitions(
                 Ordering::Equal => Srgba::BLUE,
                 Ordering::Less => Srgba::GREEN,
             };
-            if !rows_to_slice.is_empty() {
-                //draw_convex_hull(cmds.reborrow(), points, Color::Srgba(color));
-            }
         });
-
-        if rows_to_slice.contains(&row) {
-            // dbg!(&row, &rows_to_slice);
-        }
 
         // Calculate density
         let total_area = f32::from(COLUMNS) * BRICK_DIM * BRICK_DIM;
@@ -605,8 +613,13 @@ fn partitions(
     // NOTE: so bloody inelegant but this is a prototype after all:
     // - with a single loop, the partition table didn't get built up completely
     //   before trying to execute the `SliceRow`s
+
+    //if freeze.is_empty() {
+    //    return;
+    //}
+    //freeze.clear();
     for row in 0..ROWS {
-        let mut in_row = colliders_in_row(row, colliders.iter());
+        let in_row = colliders_in_row(row, colliders.iter());
 
         // TODO: skip calculation when not slicing current row
         let parents_in_row = children_to_unique_parents(
@@ -615,9 +628,11 @@ fn partitions(
                 .flat_map(|(child, _)| parents.iter_ancestors(*child)),
         );
 
-        // Slice logic
+        // Slice logic: Triggers if there is a `SliceRow` AND a `Freeze`, as we
+        // only want to slice on ground contact.
         if rows_to_slice.contains(&row) {
-            let mut hull_to_collider =
+            freeze.clear();
+            let hull_to_collider =
                 |hull: &ConvexHull| Collider::convex_hull(hull).unwrap();
             for parent in parents_in_row {
                 // for each partent, get children, lookup (child_id, row) in
@@ -708,8 +723,28 @@ fn partitions(
                     spawn_hull_groups(cmds.reborrow(), below);
                 }
 
+                // FIXME: somehow this is running multiple times and causing
+                // panics. I'm pretty sure it panics when multiple rows that each
+                // cantain the same parent are sliced. The first slice despawns
+                // the parent, the second somehow manages to get through the
+                // above logic (which needs the parent i'm pretty sure), and
+                // then goes and tries to despawn it again and, voilà, we have
+                // a panic.
+                // - Handle despawn in separate system scheduled after
+                // `partitions`, and deduplicate `DespawnTetromino` events?
+                //
+                //
                 // despawn parent
-                cmds.entity(parent).despawn_recursive();
+                if let Some(mut parent_cmds) = cmds.get_entity(parent) {
+                    //info!("Despawing Tetromino: parent id = {:?}", &parent);
+                    //parent_cmds.despawn_descendants();
+                    //parent_cmds.despawn()
+                    info!("Event: DespawnTetromino({:?})", &parent);
+                    despawn.send(DespawnTetromino(parent));
+                } else {
+                    warn!("No Tetromino parent to despawn: id = {:?}", parent);
+                };
+
                 //}
             }
             // TODO:
@@ -726,6 +761,27 @@ fn partitions(
     //hitmap.0.clear();
 }
 
+fn despawn_tetrominos(
+    mut despawn: EventReader<DespawnTetromino>,
+    mut cmds: Commands,
+) {
+    despawn
+        .read()
+        .sorted()
+        .dedup()
+        .for_each(|&DespawnTetromino(id)| {
+            //if let Some(mut parent_cmds) = cmds.get_entity(id) {
+                info!("Despawning Tetromino: id = {:?}", &id);
+                cmds.entity(id).despawn_recursive();
+            //} else {
+            //    warn!(
+            //        "Attempted to despawn non-existent Tetromino: id = {:?}",
+            //        id
+            //    );
+            //};
+        });
+}
+
 /// Check for disconnected shapes.
 /// For each group of connected hulls, spawn a `RigidBody` whose children are
 /// the members of the group.
@@ -737,7 +793,23 @@ fn spawn_hull_groups(mut cmds: Commands, convex_hulls: Vec<Vec<Vec2>>) {
             .into_iter()
             // FIXME: game threw panic here somehow. Where are the concave
             // hulls slipping through?
-            .map(|h| Collider::convex_hull(&h).unwrap());
+            .filter_map(|h| {
+                if h.len() > 2 {
+                    match Collider::convex_hull(&h) {
+                        Some(collider) => Some(collider),
+                        None => {
+                            warn!("Found non-convex hull: {:?}", &h);
+                            None
+                        }
+                    }
+                } else {
+                    warn!(
+                        "Found non-convex hull with two or fewer points: {:?}",
+                        &h
+                    );
+                    None
+                }
+            });
         // Post slice chunks get full gravity.
         cmds.spawn(TetrominoBundle::new(1.0))
             .with_children(|children| {
@@ -772,7 +844,7 @@ fn group_hulls(hulls: Vec<ConvexHull>) -> HashMap<usize, Vec<ConvexHull>> {
     for hull in hulls {
         // check if hull is connected to existing group
         let mut in_group = None;
-        for (id, mut group) in groups.iter_mut() {
+        for (id, group) in groups.iter_mut() {
             for h in group.iter() {
                 if any_shared_point(&hull, h) {
                     in_group = Some(*id);
@@ -789,12 +861,12 @@ fn group_hulls(hulls: Vec<ConvexHull>) -> HashMap<usize, Vec<ConvexHull>> {
             }
             // otherwise add `hull` to group
             Some(id) => {
-                if let Some(mut v) = groups.get_mut(&id) {
+                if let Some(v) = groups.get_mut(&id) {
                     v.push(hull);
                 }
             }
         }
-        in_group = None;
+        //in_group = None;
     }
 
     groups
@@ -817,11 +889,15 @@ fn check_row_densities(
     mut densities: EventReader<RowDensity>,
     mut deactivate: EventWriter<DeactivateTetroid>,
     mut slices: EventWriter<SliceRow>,
+    mut freeze: EventReader<Freeze>
 ) {
     densities.read().for_each(|rd| {
-        if rd.density >= 0.7 {
-            slices.send(SliceRow { row: rd.row });
-            deactivate.send(DeactivateTetroid);
+        if rd.density >= 0.7 && !freeze.is_empty() {
+            freeze.clear();
+            let slice_row = SliceRow { row: rd.row };
+            info!("{:?}", &slice_row);
+            slices.send(slice_row);
+            //deactivate.send(DeactivateTetroid);
         }
     })
 }
@@ -830,6 +906,11 @@ fn check_row_densities(
 pub(crate) struct SliceRow {
     row: u8,
 }
+
+/// Indicates that a parent `Tetromino` should be despawned along with all of
+/// its children.
+#[derive(Event, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub(crate) struct DespawnTetromino(Entity);
 
 /// Get area of clockwise-ordered convex hull.
 ///
@@ -847,9 +928,24 @@ fn convex_hull_area(convex_hull: &ConvexHull) -> f32 {
 }
 
 /// Update table of intersection points of each tetroid with every row.
+//
+//             v0       v1
+//              ┌───────┐
+//              │  s0   │
+//          c_lu│       │c_ru
+// ────────────►x ───── x◄────────────
+//              │       │
+//              │       │v2      v3
+//              │  s1   └───────┐
+//              │               │
+//          c_lb│               │
+// ────────────►x ───────────── x◄────
+//              │     s2        │c_rb
+//              └───────────────┘
+//             v5                v4
+//
 fn row_intersections(
     mut hitmap: ResMut<HitMap>,
-    mut cmds: Commands,
     rc: Res<RapierContext>,
     tetroids: Query<Entity, (With<Tetroid>, With<Collider>)>,
     colliders: Query<&Collider, With<Tetroid>>,
@@ -973,4 +1069,23 @@ fn reset_debug_shapes(
         .iter()
         .for_each(|t| cmds.entity(t).despawn_recursive());
     spawn_lblock(cmds);
+}
+
+/// If no active tetroid, send spawn event.
+fn check_for_active_tetroid(
+    active_tetroid: Query<Entity, With<ActiveTetroid>>,
+    mut next_tetroid: EventWriter<SpawnNextTetroid>,
+) {
+    if active_tetroid.iter().next().is_none() {
+        next_tetroid.send(SpawnNextTetroid);
+        info!("SpawnNextTetroid")
+    }
+}
+
+/// If no active tetroid, send spawn event.
+fn list_active_tetroid(active_tetroid: Query<Entity, With<ActiveTetroid>>) {
+    let len = active_tetroid.iter().len();
+    if len > 1 {
+        warn!("Too many active tetroids: expected 1 but found {}", len);
+    }
 }

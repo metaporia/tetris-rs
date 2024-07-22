@@ -42,6 +42,9 @@
             clang
             lld
 
+            # for bevy_mod_debugdump graph visualization
+            graphviz
+
           ];
 
           # drop into fish shell for development

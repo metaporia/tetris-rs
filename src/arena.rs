@@ -6,7 +6,7 @@ use bevy_prototype_lyon::{
     draw::{Fill, Stroke},
     entity::ShapeBundle,
     geometry::GeometryBuilder,
-    shapes::{self, Rectangle, RectangleOrigin},
+    shapes::{self},
 };
 use bevy_rapier2d::prelude::*;
 
@@ -58,7 +58,6 @@ pub(crate) struct RowDensity {
 /// - And then we read `RowDensity(Row, Density)` events and apply each,
 /// indexing `density_map` accordingly.
 pub fn render_row_density(
-    mut commands: Commands,
     density_map: ResMut<RowDensityIndicatorMap>,
     mut squares: Query<&mut Fill, With<DensityIndicatorSquare>>,
     mut densities: EventReader<RowDensity>,
