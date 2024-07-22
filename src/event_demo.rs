@@ -57,6 +57,7 @@ const VELOCITY: Velocity = Velocity {
     linvel: Vec2::new(0.0, -100.0),
     angvel: 0.0,
 };
+const FRICTION: f32 = 0.3;
 
 pub(crate) const GROUND_Y: f32 = -BRICK_DIM * 18.0 / 2.0;
 
@@ -154,33 +155,6 @@ pub fn app() {
 fn setup_graphics(mut commands: Commands) {
     // Add a camera so we can see the debug-render.
     commands.spawn(Camera2dBundle::default());
-}
-
-fn spawn_block(mut cmds: Commands) {
-    let id = cmds
-        .spawn(RigidBody::Dynamic)
-        .insert(Collider::cuboid(BRICK_DIM, BRICK_DIM))
-        .insert(ColliderMassProperties::Mass(1000.0))
-        .insert(Sleeping::default())
-        .insert(Restitution {
-            coefficient: 0.0,
-            combine_rule: CoefficientCombineRule::Min,
-        })
-        .insert(ActiveTetroid)
-        .insert(Tetroid)
-        .insert(TransformBundle::from(Transform::from_xyz(
-            -BRICK_DIM, 320.0, 0.0,
-        )))
-        .insert(ExternalImpulse {
-            impulse: Vec2::new(0.0, 0.0),
-            torque_impulse: 0.0,
-        })
-        .insert(ActiveEvents::COLLISION_EVENTS)
-        .insert(Ccd::enabled()) // enable continous collision detection
-        .insert(VELOCITY)
-        .insert(GravityScale(GRAVITY))
-        .id();
-    info!("spawn_block: {:?}", id);
 }
 
 /// Send `Freeze` event if active tetroid hits ground or other tetroid.
@@ -546,7 +520,6 @@ fn partitions(
 
     // populate partitions from `HitMap`
     for row in 0..ROWS {
-        //let global_transform = global_transforms.get(*id).unwrap();
         let mut in_row = colliders_in_row(row, colliders.iter());
         if !in_row.is_empty() && !rows_to_slice.is_empty() && row == 0 {
             dbg!(&row, &in_row);
@@ -762,12 +735,14 @@ fn spawn_hull_groups(mut cmds: Commands, convex_hulls: Vec<Vec<Vec2>>) {
         assert!(!group.is_empty());
         let colliders = group
             .into_iter()
+            // FIXME: game threw panic here somehow. Where are the concave
+            // hulls slipping through?
             .map(|h| Collider::convex_hull(&h).unwrap());
         // Post slice chunks get full gravity.
         cmds.spawn(TetrominoBundle::new(1.0))
             .with_children(|children| {
                 colliders.for_each(|col| {
-                    children.spawn(TetroidColliderBundle::new(col, 0.3));
+                    children.spawn(TetroidColliderBundle::new(col, FRICTION));
                 })
             });
     }

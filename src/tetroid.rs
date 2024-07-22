@@ -146,7 +146,7 @@ pub fn spawn_lblock(mut commands: Commands) {
                         collider,
                         ..Default::default()
                     }
-                    .with_friction(0.3)
+                    .with_friction(FRICTION)
                     .with_starting_position(x, y);
                     children
                         .spawn(collider_bundle)
