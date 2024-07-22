@@ -770,6 +770,9 @@ fn despawn_tetrominos(
         .sorted()
         .dedup()
         .for_each(|&DespawnTetromino(id)| {
+            // NOTE: for some reasone this bugged the fuck out when used with
+            // the `if let ... cmds.get_entity`. idk
+
             //if let Some(mut parent_cmds) = cmds.get_entity(id) {
                 info!("Despawning Tetromino: id = {:?}", &id);
                 cmds.entity(id).despawn_recursive();
