@@ -1,7 +1,7 @@
 // arena.rs
 
-use bevy::color::prelude::*;
 use bevy::prelude::*;
+use bevy::{color::prelude::*, sprite::Anchor};
 use bevy_prototype_lyon::{
     draw::{Fill, Stroke},
     entity::ShapeBundle,
@@ -48,6 +48,9 @@ pub(crate) struct RowDensity {
     pub density: f32,
 }
 
+#[derive(Component)]
+pub(crate) struct RowDensityText;
+
 /// Update row density indicator column based on latest row densities.
 /// TODO:
 /// - add `RowDensity` events
@@ -59,18 +62,37 @@ pub(crate) struct RowDensity {
 /// indexing `density_map` accordingly.
 pub fn render_row_density(
     density_map: ResMut<RowDensityIndicatorMap>,
-    mut squares: Query<&mut Fill, With<DensityIndicatorSquare>>,
+    mut squares: Query<(&mut Fill, &Children), With<DensityIndicatorSquare>>,
     mut densities: EventReader<RowDensity>,
+    mut texts: Query<&mut Text, With<RowDensityText>>,
 ) {
     //assert!(density_map.0.len() == 18);
     //dbg!(density_map.0.len());
     for r @ RowDensity { row, density } in densities.read() {
         if let Some(RowBounds { lower, upper, row }) = RowBounds::new(*row) {
             if let Some(id) = density_map.get_by_row(row) {
-                if let Ok(mut fill) = squares.get_mut(*id) {
+                if let Ok((mut fill, children)) = squares.get_mut(*id) {
+                    // update color
                     if let Color::Srgba(mut srgba) = fill.color {
                         srgba.alpha = *density;
                         fill.color = Color::Srgba(srgba)
+                    }
+                    // update text. `children` should be a singleton
+                    if let Some(mut text) = children
+                        .iter()
+                        .next()
+                        .and_then(|&id| texts.get_mut(id).ok())
+                    {
+                        let density_string = format!("{:.2}", density);
+
+                        match &mut text.sections[..] {
+                            [] => text.sections.push(TextSection::new(
+                                density_string,
+                                TextStyle::default(),
+                            )),
+                            [section] => section.value = density_string,
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -130,6 +152,19 @@ pub fn spawn_density_indicator_column(
                         .spawn(shape)
                         .insert(transform_bundle)
                         .insert(DensityIndicatorSquare)
+                        // add text bundle to render density number
+                        .with_children(|children| {
+                            // spawn initial empty text
+                            children
+                                .spawn(Text2dBundle {
+                                    transform: Transform::from_xyz(
+                                        -BRICK_DIM, 0.0, 0.0,
+                                    ),
+                                    text_anchor: Anchor::CenterRight,
+                                    ..Default::default()
+                                })
+                                .insert(RowDensityText);
+                        })
                         .id();
                     density_map.0.push(id);
                 }
