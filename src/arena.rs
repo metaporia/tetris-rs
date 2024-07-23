@@ -10,7 +10,9 @@ use bevy_prototype_lyon::{
 };
 use bevy_rapier2d::prelude::*;
 
-use crate::event_demo::{RowBounds, GROUND_Y, ROWS};
+use crate::event_demo::{
+    DeactivateTetroid, Freeze, RowBounds, SliceRow, GROUND_Y, ROWS,
+};
 use crate::tetroid::BRICK_DIM;
 
 const OUTLINE_THICKNESS: f32 = 1.0;
@@ -66,38 +68,103 @@ pub fn render_row_density(
     mut densities: EventReader<RowDensity>,
     mut texts: Query<&mut Text, With<RowDensityText>>,
 ) {
-    //assert!(density_map.0.len() == 18);
-    //dbg!(density_map.0.len());
     for r @ RowDensity { row, density } in densities.read() {
-        if let Some(RowBounds { lower, upper, row }) = RowBounds::new(*row) {
-            if let Some(id) = density_map.get_by_row(row) {
-                if let Ok((mut fill, children)) = squares.get_mut(*id) {
-                    // update color
-                    if let Color::Srgba(mut srgba) = fill.color {
-                        srgba.alpha = *density;
-                        fill.color = Color::Srgba(srgba)
-                    }
-                    // update text. `children` should be a singleton
-                    if let Some(mut text) = children
-                        .iter()
-                        .next()
-                        .and_then(|&id| texts.get_mut(id).ok())
-                    {
-                        let density_string = format!("{:.2}", density);
+        //let Some(RowBounds { lower, upper, row }) = RowBounds::new(*row)
+        //else {
+        //    break;
+        //};
+        let Some((mut fill, children)) = RowBounds::new(*row)
+            .and_then(|_| density_map.get_by_row(*row))
+            .and_then(|id| squares.get_mut(*id).ok())
+        else {
+            break;
+        };
+        //let Ok((mut fill, children)) = squares.get_mut(*id) else { break; };
+        // update color
+        if let Color::Srgba(mut srgba) = fill.color {
+            srgba.alpha = *density;
+            fill.color = Color::Srgba(srgba)
+        }
+        // update text. `children` should be a singleton
+        if let Some(mut text) = children
+            .iter()
+            .next()
+            .and_then(|&id| texts.get_mut(id).ok())
+        {
+            let density_string = format!("{:.2}", density);
 
-                        match &mut text.sections[..] {
-                            [] => text.sections.push(TextSection::new(
-                                density_string,
-                                TextStyle::default(),
-                            )),
-                            [section] => section.value = density_string,
-                            _ => {}
-                        }
-                    }
-                }
+            match &mut text.sections[..] {
+                [] => text.sections.push(TextSection::new(
+                    density_string,
+                    TextStyle::default(),
+                )),
+                [section] => section.value = density_string,
+                _ => {}
             }
         }
     }
+}
+
+#[derive(Event)]
+pub struct ClearRowDensities;
+
+/// Clear row densities indicators after slice application.
+pub fn clear_row_densities(
+    trigger: Trigger<ClearRowDensities>,
+    mut squares: Query<(&mut Fill, &Children), With<DensityIndicatorSquare>>,
+    mut texts: Query<&mut Text, With<RowDensityText>>,
+) {
+    for (mut fill, children) in squares.iter_mut() {
+        // wipe color
+        let Color::Srgba(mut srgba) = fill.color else {
+            warn!("clear_row_densities: expected Color::srgba but \
+                found other variant.");
+            break;
+        };
+        srgba.alpha = 0.0;
+        fill.color = Color::Srgba(srgba);
+
+        info!("triggered: Clear_row_densities");
+        // wipe text
+        if let Some(mut text) = children
+            .iter()
+            .next()
+            .and_then(|&id| texts.get_mut(id).ok())
+        {
+            let density_string = "0".to_string();
+
+            match &mut text.sections[..] {
+                [] => text.sections.push(TextSection::new(
+                    density_string,
+                    TextStyle::default(),
+                )),
+                [section] => section.value = density_string,
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Check for rows above the density threshhold (0.9) and if so send `SliceRow`
+/// event.
+///
+/// As far as system ordering, this runs after `partitions` so if there is a
+/// `SliceRow`, partitions can apply it on the next `Update`.
+pub fn check_row_densities(
+    mut densities: EventReader<RowDensity>,
+    mut deactivate: EventWriter<DeactivateTetroid>,
+    mut slices: EventWriter<SliceRow>,
+    mut freeze: EventReader<Freeze>,
+) {
+    densities.read().for_each(|rd| {
+        if rd.density >= 0.7 && !freeze.is_empty() {
+            freeze.clear();
+            let slice_row = SliceRow { row: rd.row };
+            info!("{:?}", &slice_row);
+            slices.send(slice_row);
+            //deactivate.send(DeactivateTetroid);
+        }
+    })
 }
 
 /// Density indicator column
