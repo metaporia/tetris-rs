@@ -577,11 +577,6 @@ fn partitions(
             area += convex_hull_area(&points);
 
             // Update `Partition`
-            // FIXME:: partition map is not being created correctly: when
-            // slicing row 0, all entries are of row 0.
-            // FIXME: handles row 0 differently, crashes on all other rows in
-            // `colliders_in_row` because there is a collider missing a
-            // `GlobalTransform`
             if let Some(row_entries) = partitions.0.get_mut(&id) {
                 // NOTE: overwrite/ignore possibly existing entry for current
                 // entity as there can (should, rather) be only one of a given
@@ -591,13 +586,6 @@ fn partitions(
                 let v = vec![(row, points.clone())];
                 partitions.0.insert(id, v);
             }
-
-            // slice 2nd row as test
-            let color = match Ord::cmp(&row, &2) {
-                Ordering::Greater => Srgba::RED,
-                Ordering::Equal => Srgba::BLUE,
-                Ordering::Less => Srgba::GREEN,
-            };
         });
 
         // Calculate density
@@ -613,27 +601,32 @@ fn partitions(
     // NOTE: so bloody inelegant but this is a prototype after all:
     // - with a single loop, the partition table didn't get built up completely
     //   before trying to execute the `SliceRow`s
+    // - Consider collecting a `parents_in_row: Vec<(Entity, Vec<Row>)` and
+    //   then appling the slice per parent, allowing for proper application
+    //   multiple `SliceRow`s to a single `Tetromino`/parent. As a bonus it 
+    //   would be faster.
 
     //if freeze.is_empty() {
     //    return;
     //}
     //freeze.clear();
     for row in 0..ROWS {
-        let in_row = colliders_in_row(row, colliders.iter());
-
-        // TODO: skip calculation when not slicing current row
-        let parents_in_row = children_to_unique_parents(
-            in_row
-                .iter()
-                .flat_map(|(child, _)| parents.iter_ancestors(*child)),
-        );
-
         // Slice logic: Triggers if there is a `SliceRow` AND a `Freeze`, as we
         // only want to slice on ground contact.
         if rows_to_slice.contains(&row) {
             freeze.clear();
+
+            let in_row = colliders_in_row(row, colliders.iter());
+            let parents_in_row: Vec<Entity> = in_row
+                .iter()
+                .flat_map(|(child, _)| parents.iter_ancestors(*child))
+                .sorted()
+                .dedup()
+                .collect();
+
             let hull_to_collider =
                 |hull: &ConvexHull| Collider::convex_hull(hull).unwrap();
+
             for parent in parents_in_row {
                 // for each partent, get children, lookup (child_id, row) in
                 // partitions and collect ConvexHulls
@@ -663,18 +656,8 @@ fn partitions(
                             .iter()
                             .map(|(r, _)| r)
                             .collect::<Vec<&u8>>();
-                        //dbg!(rows);
-                        //dbg!(&partitions.0);
                         entries.iter().for_each(|(collider_row, hull)| {
-                            let color = Color::Srgba(
-                                match Ord::cmp(&row, collider_row) {
-                                    Ordering::Greater => Srgba::RED,
-                                    Ordering::Equal => Srgba::BLUE,
-                                    Ordering::Less => Srgba::GREEN,
-                                },
-                            );
                             if is_child_in_row {
-                                //draw_convex_hull( cmds.reborrow(), hull.clone(), color,);
                                 match Ord::cmp(&row, collider_row) {
                                     Ordering::Greater => {
                                         above.push(hull.clone());
@@ -694,10 +677,7 @@ fn partitions(
                                     .points()
                                     .map(|p| transform_point(transform)(&p))
                                     .collect();
-                                //let global_points =
-                                //    hull_to_collider(&global_points);
 
-                                //draw_convex_hull( cmds.reborrow(), global_points, color,);
                                 match Ord::cmp(&row, collider_row) {
                                     Ordering::Greater => {
                                         above.push(global_points);
@@ -714,6 +694,9 @@ fn partitions(
                     }
                 }
 
+                // With `spawn_hull_groups` working, can we not just collect
+                // all the new hulls into a single `Vec` and pass it to 
+                // `spawn_hull_groups`
                 if !above.is_empty() {
                     spawn_hull_groups(cmds.reborrow(), above);
                 }
@@ -770,14 +753,14 @@ fn despawn_tetrominos(
         .sorted()
         .dedup()
         .for_each(|&DespawnTetromino(id)| {
-            // NOTE: for some reasone this bugged the fuck out when used with
+            // NOTE: for some reason this bugged the fuck out when used with
             // the `if let ... cmds.get_entity`. The only other change made was
-            // adding a `!freeze.is_empty()` guard to `check_row_densities` 
+            // adding a `!freeze.is_empty()` guard to `check_row_densities`
             // before sending `SliceRow` events. Probably that right?
 
             //if let Some(mut parent_cmds) = cmds.get_entity(id) {
-                info!("Despawning Tetromino: id = {:?}", &id);
-                cmds.entity(id).despawn_recursive();
+            info!("Despawning Tetromino: id = {:?}", &id);
+            cmds.entity(id).despawn_recursive();
             //} else {
             //    warn!(
             //        "Attempted to despawn non-existent Tetromino: id = {:?}",
@@ -894,7 +877,7 @@ fn check_row_densities(
     mut densities: EventReader<RowDensity>,
     mut deactivate: EventWriter<DeactivateTetroid>,
     mut slices: EventWriter<SliceRow>,
-    mut freeze: EventReader<Freeze>
+    mut freeze: EventReader<Freeze>,
 ) {
     densities.read().for_each(|rd| {
         if rd.density >= 0.7 && !freeze.is_empty() {
