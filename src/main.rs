@@ -3,10 +3,7 @@ use std::{cmp::Ordering, collections::HashMap, f32::consts::PI};
 
 use bevy::{prelude::*, window::WindowResolution};
 use bevy_prototype_lyon::prelude::*;
-use bevy_rapier2d::{
-    geometry::RayIntersection,
-    prelude::*,
-};
+use bevy_rapier2d::{geometry::RayIntersection, prelude::*};
 
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
@@ -15,7 +12,7 @@ mod event_demo;
 mod tetroid;
 
 use arena::{spawn_arena, Ground};
-use event_demo::DebugShape;
+use event_demo::{DebugShape, RowBounds};
 use tetroid::components::*;
 use tetroid::{spawn_lblock, BRICK_DIM};
 
@@ -24,8 +21,22 @@ const PIXELS_PER_METER: f32 = 50.0;
 
 const IMPULSE_SCALAR: f32 = 20000.0;
 
+fn test_rows_between() {
+    let Some(three) = RowBounds::new(3) else {
+        return;
+    };
+    let Some(zero) = RowBounds::new(18) else {
+        return;
+    };
+
+    zero.rows_between(&three).for_each(|r| {
+        dbg!(r);
+    });
+}
+
 fn main() {
-    event_demo::app();
+    //event_demo::app();
+    test_rows_between();
 }
 
 #[derive(Event)]
@@ -66,7 +77,7 @@ fn kbd_input(
     let mut impulse = Vec2::new(0.0, 0.0);
     let lateral_imp = 5.0 * IMPULSE_SCALAR;
     let vertical_imp = lateral_imp;
-    
+
     if kbd_input.pressed(KeyCode::ArrowLeft) {
         impulse.x = -lateral_imp;
     }
@@ -91,7 +102,6 @@ fn kbd_input(
         };
     }
 }
-
 
 // sort by lowest y, if y's are equal lowest x
 fn cmp_vec2_by_y(x: &Vec2, y: &Vec2) -> Ordering {
@@ -139,10 +149,9 @@ fn draw_convex_hull(mut cmds: Commands, points: Vec<Vec2>, color: Color) {
             ..Default::default()
         },
         Stroke::new(color, 2.0),
-        DebugShape
+        DebugShape,
     ));
 }
-
 
 /// Demo to test whether ray casts that hit at origin yield correct contact
 /// point (they do if `solid==true`)
@@ -182,4 +191,105 @@ fn draw_ray(mut cmds: Commands, origin: Vec2, contact_point: Vec2) {
         },
         Stroke::new(Color::Srgba(Srgba::WHITE), 1.0),
     ));
+}
+
+fn broken_points() -> Vec<Vec<Vec2>> {
+    vec![
+        vec![
+            Vec2::new(53.301056, -256.6482),
+            Vec2::new(61.62536, -240.0),
+            Vec2::new(28.084183, -240.0),
+            Vec2::new(26.46836, -243.23154),
+        ],
+        vec![
+            Vec2::new(26.468363, -243.23154),
+            Vec2::new(28.084183, -240.0),
+            Vec2::new(20.005463, -240.0),
+        ],
+        vec![
+            Vec2::new(13.0517025, -270.06424),
+            Vec2::new(26.468359, -243.23154),
+            Vec2::new(20.005447, -240.0),
+            Vec2::new(-5.4569855, -240.0),
+            Vec2::new(-13.780991, -256.64758),
+        ],
+        vec![
+            Vec2::new(80.13375, -270.06485),
+            Vec2::new(93.55041, -243.23216),
+            Vec2::new(87.08623, -240.0),
+            Vec2::new(61.62535, -240.0),
+            Vec2::new(53.301056, -256.6482),
+        ],
+        vec![
+            Vec2::new(120.05161, -240.11395),
+            Vec2::new(150.0516, -240.10707),
+            Vec2::new(150.0, -240.0),
+            Vec2::new(120.05124, -240.0),
+        ],
+        vec![
+            Vec2::new(120.05161, -240.11395),
+            Vec2::new(150.0516, -240.10707),
+            Vec2::new(150.0, -240.0),
+            Vec2::new(120.05124, -240.0),
+        ],
+        vec![
+            Vec2::new(150.05849, -270.07202),
+            Vec2::new(150.0516, -240.10706),
+            Vec2::new(120.05161, -240.11395),
+            Vec2::new(120.05849, -270.05576),
+        ],
+        vec![
+            Vec2::new(-78.16851, -270.05472),
+            Vec2::new(-75.5449, -270.05447),
+            Vec2::new(-77.10038, -268.7656),
+        ],
+        vec![
+            Vec2::new(-117.13181, -270.0581),
+            Vec2::new(-78.168495, -270.05472),
+            Vec2::new(-77.10038, -268.7656),
+            Vec2::new(-100.2007, -249.6247),
+        ],
+        vec![
+            Vec2::new(-117.13181, -270.0581),
+            Vec2::new(-78.168495, -270.05472),
+            Vec2::new(-77.10038, -268.7656),
+            Vec2::new(-100.2007, -249.6247),
+        ],
+        vec![
+            Vec2::new(-150.00078, -270.05225),
+            Vec2::new(-119.99673, -270.05225),
+            Vec2::new(-119.938324, -240.25386),
+            Vec2::new(-149.93826, -240.19107),
+        ],
+        vec![
+            Vec2::new(-150.00078, -270.05225),
+            Vec2::new(-119.99673, -270.05225),
+            Vec2::new(-119.938324, -240.25386),
+            Vec2::new(-149.93826, -240.19107),
+        ],
+        vec![
+            Vec2::new(-150.00078, -270.05225),
+            Vec2::new(-119.99673, -270.05225),
+            Vec2::new(-119.938324, -240.25386),
+            Vec2::new(-149.93826, -240.19107),
+        ],
+        vec![
+            Vec2::new(-150.00078, -270.05225),
+            Vec2::new(-119.99673, -270.05225),
+            Vec2::new(-119.938324, -240.25386),
+            Vec2::new(-149.93826, -240.19107),
+        ],
+        vec![
+            Vec2::new(-150.00078, -270.05225),
+            Vec2::new(-119.99673, -270.05225),
+            Vec2::new(-119.938324, -240.25386),
+            Vec2::new(-149.93826, -240.19107),
+        ],
+        vec![
+            Vec2::new(-150.00078, -270.05225),
+            Vec2::new(-119.99673, -270.05225),
+            Vec2::new(-119.938324, -240.25386),
+            Vec2::new(-149.93826, -240.19107),
+        ],
+    ]
 }

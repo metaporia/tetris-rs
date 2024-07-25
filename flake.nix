@@ -27,6 +27,9 @@
             # dev tools
             rust-analyzer
 
+            # debugging: codellb adapter
+            vscode-extensions.vadimcn.vscode-lldb.adapter
+
             # bevy deps
             udev
             alsa-lib

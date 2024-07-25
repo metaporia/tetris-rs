@@ -117,8 +117,10 @@ pub fn clear_row_densities(
     for (mut fill, children) in squares.iter_mut() {
         // wipe color
         let Color::Srgba(mut srgba) = fill.color else {
-            warn!("clear_row_densities: expected Color::srgba but \
-                found other variant.");
+            warn!(
+                "clear_row_densities: expected Color::srgba but \
+                found other variant."
+            );
             break;
         };
         srgba.alpha = 0.0;
@@ -143,6 +145,33 @@ pub fn clear_row_densities(
             }
         }
     }
+}
+
+/// A per parent/rigid-body slice event. `id` refers to the parent `Tetromino`;
+/// `rows` contains the rows to slice `id` by.
+#[derive(Event, Debug)]
+pub struct SliceTetromino {
+    id: Entity,
+    rows: Vec<usize>,
+}
+
+pub fn rcheck_row_densities(
+    mut densities: EventReader<RowDensity>,
+    mut deactivate: EventWriter<DeactivateTetroid>,
+    mut slices: EventWriter<SliceTetromino>,
+    mut freeze: EventReader<Freeze>,
+) {
+    densities.read().for_each(|rd| {
+        // TODO: sort out Freeze vs Tetroid hit ground event
+        // (remove implicit dependencies between events)
+        if rd.density >= 0.7 && !freeze.is_empty() {
+            freeze.clear();
+            //let slice = SliceTetromino { row: vec![rd.row] };
+            //info!("{:?}", &slice);
+            //slices.send(slice);
+            //deactivate.send(DeactivateTetroid);
+        }
+    })
 }
 
 /// Check for rows above the density threshhold (0.9) and if so send `SliceRow`

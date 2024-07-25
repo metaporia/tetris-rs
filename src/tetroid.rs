@@ -5,10 +5,15 @@ use bevy_rapier2d::prelude::*;
 
 pub mod components;
 
-use crate::event_demo::{Tetroid, GROUND_Y, FRICTION};
+use crate::event_demo::{Tetroid, FRICTION, GROUND_Y};
 use components::*;
 
 pub const BRICK_DIM: f32 = 30.0;
+
+/// Marker type for tetromino. A `Tetromino` marks a parent `Tetroid` entity
+/// with a `RigidBody` whose children are convex colliders.
+#[derive(Component, Default, Debug)]
+pub struct Tetromino;
 
 /// Common components of a `Tetromino`--the parent `RigidBody`, whose children
 /// are have `TetroidColliderBundle`.
@@ -21,6 +26,7 @@ pub(crate) struct TetrominoBundle {
     pub velocity: Velocity,
     pub gravity_scale: GravityScale,
     tetroid: Tetroid,
+    tetromino_marker: Tetromino,
 }
 
 impl TetrominoBundle {
@@ -34,6 +40,9 @@ impl TetrominoBundle {
     }
 }
 
+#[derive(Component, Default, Debug)]
+pub struct TetroidCollider;
+
 /// Common components of `TetroidCollider`. Provides default `TransformBundle`,
 /// collision events, and necessary marker components for a child collider of a
 /// `Tetromino`
@@ -46,6 +55,7 @@ pub(crate) struct TetroidColliderBundle {
     collider: Collider,
     friction: Friction,
     restitution: Restitution,
+    tetroid_collider_marker: TetroidCollider,
 }
 
 impl TetroidColliderBundle {
@@ -66,6 +76,7 @@ impl TetroidColliderBundle {
                 coefficient: 0.0,
                 combine_rule: CoefficientCombineRule::Min,
             },
+            ..Default::default()
         }
     }
 
