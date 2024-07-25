@@ -16,27 +16,15 @@ use event_demo::{DebugShape, RowBounds};
 use tetroid::components::*;
 use tetroid::{spawn_lblock, BRICK_DIM};
 
+use crate::event_demo::{get_min_max, GROUND_Y};
+
 // width/height of single square
 const PIXELS_PER_METER: f32 = 50.0;
 
 const IMPULSE_SCALAR: f32 = 20000.0;
 
-fn test_rows_between() {
-    let Some(three) = RowBounds::new(3) else {
-        return;
-    };
-    let Some(zero) = RowBounds::new(18) else {
-        return;
-    };
-
-    zero.rows_between(&three).for_each(|r| {
-        dbg!(r);
-    });
-}
-
 fn main() {
-    //event_demo::app();
-    test_rows_between();
+    event_demo::app();
 }
 
 #[derive(Event)]
@@ -292,4 +280,49 @@ fn broken_points() -> Vec<Vec<Vec2>> {
             Vec2::new(-149.93826, -240.19107),
         ],
     ]
+}
+
+fn test_rows_between() {
+    let Some(three) = RowBounds::new(3) else {
+        return;
+    };
+    let Some(zero) = RowBounds::new(18) else {
+        return;
+    };
+    zero.rows_between(&three).for_each(|r| {
+        dbg!(r);
+    });
+}
+
+fn test_row_bounds() {
+    let ps = vec![
+        Vec2::new(-30.0, -164.11581),
+        Vec2::new(0.0, -164.11581),
+        Vec2::new(0.0, -134.11581),
+        Vec2::new(-30.0, -134.11581),
+    ];
+    let get_min_max_row_bounds = |cs: &Vec<Vec2>| {
+        get_min_max(cs.iter().map(|p| p.y)).and_then(|(min, max)| {
+            // calculate intersecting rows from bounds
+            RowBounds::from_y(max).and_then(|upper| {
+                RowBounds::from_y(min).map(|lower| (lower, upper))
+            })
+        })
+    };
+    let y: f32 = 0.0;
+    dbg!(GROUND_Y);
+    dbg!(BRICK_DIM);
+    dbg!(((y - GROUND_Y) / BRICK_DIM).abs() as u8);
+    dbg!(RowBounds::from_y(y));
+    dbg!(get_min_max_row_bounds(&ps));
+}
+
+fn point_cloud_convex() {
+    // TODO: fix parry2d panic: failed to convexrt point cloud to convex hull.
+    // it panicked with the below &points
+    let points = vec![
+        Vec2::new(-1.9961243, -210.0),
+        Vec2::new(-1.9961243, -210.0),
+        Vec2::new(-1.9961243, -210.0),
+    ];
 }

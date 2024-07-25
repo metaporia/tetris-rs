@@ -9,9 +9,10 @@ use bevy_prototype_lyon::{
     shapes::{self},
 };
 use bevy_rapier2d::prelude::*;
+use itertools::Itertools;
 
 use crate::event_demo::{
-    DeactivateTetroid, Freeze, RowBounds, SliceRow, GROUND_Y, ROWS,
+    DeactivateTetroid, Freeze, RowBounds, SliceRow, SliceRows, GROUND_Y, ROWS,
 };
 use crate::tetroid::BRICK_DIM;
 
@@ -114,6 +115,7 @@ pub fn clear_row_densities(
     mut squares: Query<(&mut Fill, &Children), With<DensityIndicatorSquare>>,
     mut texts: Query<&mut Text, With<RowDensityText>>,
 ) {
+    info!("triggered: Clear_row_densities");
     for (mut fill, children) in squares.iter_mut() {
         // wipe color
         let Color::Srgba(mut srgba) = fill.color else {
@@ -126,7 +128,6 @@ pub fn clear_row_densities(
         srgba.alpha = 0.0;
         fill.color = Color::Srgba(srgba);
 
-        info!("triggered: Clear_row_densities");
         // wipe text
         if let Some(mut text) = children
             .iter()
@@ -155,23 +156,33 @@ pub struct SliceTetromino {
     rows: Vec<usize>,
 }
 
+/// Bundle rows above density threshhold and trigger `SliceRows` event.
+///
+/// See `apply_slices`.
 pub fn rcheck_row_densities(
     mut densities: EventReader<RowDensity>,
     mut deactivate: EventWriter<DeactivateTetroid>,
-    mut slices: EventWriter<SliceTetromino>,
+    //mut slices: EventWriter<SliceTetromino>,
     mut freeze: EventReader<Freeze>,
+    mut commands: Commands,
 ) {
-    densities.read().for_each(|rd| {
-        // TODO: sort out Freeze vs Tetroid hit ground event
-        // (remove implicit dependencies between events)
-        if rd.density >= 0.7 && !freeze.is_empty() {
-            freeze.clear();
-            //let slice = SliceTetromino { row: vec![rd.row] };
-            //info!("{:?}", &slice);
-            //slices.send(slice);
-            //deactivate.send(DeactivateTetroid);
+    // TODO: sort out Freeze vs Tetroid hit ground event
+    // (remove implicit dependencies between events)
+    if freeze.is_empty() {
+        return;
+    }
+    freeze.clear();
+    let rows = densities.read().filter_map(|rd| {
+        if rd.density >= 0.7 {
+            Some(rd.row)
+        } else {
+            None
         }
-    })
+    }); // .sorted().dedup();
+    let Some(slice_rows) = SliceRows::new(rows.collect()) else {
+        return;
+    };
+    commands.trigger(slice_rows)
 }
 
 /// Check for rows above the density threshhold (0.9) and if so send `SliceRow`
