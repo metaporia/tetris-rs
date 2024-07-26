@@ -9,14 +9,13 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
 mod arena;
 mod event_demo;
+pub mod image_demo;
 mod tetroid;
 
 use arena::{spawn_arena, Ground};
-use event_demo::{DebugShape, RowBounds};
+use event_demo::{get_min_max, DebugShape, RowBounds, GROUND_Y};
 use tetroid::components::*;
 use tetroid::{spawn_lblock, BRICK_DIM};
-
-use crate::event_demo::{get_min_max, GROUND_Y};
 
 // width/height of single square
 const PIXELS_PER_METER: f32 = 50.0;
@@ -24,7 +23,9 @@ const PIXELS_PER_METER: f32 = 50.0;
 const IMPULSE_SCALAR: f32 = 20000.0;
 
 fn main() {
-    event_demo::app();
+    //event_demo::app();
+    image_demo::make_image();
+    //image_demo::fractal();
 }
 
 #[derive(Event)]
