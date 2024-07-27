@@ -23,8 +23,7 @@ const PIXELS_PER_METER: f32 = 50.0;
 const IMPULSE_SCALAR: f32 = 20000.0;
 
 fn main() {
-    //event_demo::app();
-    image_demo::make_image();
+    event_demo::app();
     //image_demo::fractal();
 }
 
@@ -166,7 +165,7 @@ fn draw_circle_contact(center: Vec2, mut cmds: Commands) {
             path: GeometryBuilder::build_as(&contact_point),
             ..default()
         },
-        Stroke::new(Color::Srgba(Srgba::BLACK), 1.0),
+        Stroke::new(Color::Srgba(Srgba::GREEN), 1.0),
     ));
 }
 

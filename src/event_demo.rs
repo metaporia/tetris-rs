@@ -8,7 +8,8 @@
 //! sent.
 
 use crate::arena::{clear_row_densities, rcheck_row_densities};
-use crate::{draw_ray, Pause};
+use crate::image_demo::{ClearBelow, SpawnSquare};
+use crate::{draw_ray, image_demo, Pause};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::log::{Level, LogPlugin};
 use bevy::utils::HashMap;
@@ -72,6 +73,8 @@ pub fn app() {
         .add_event::<DespawnTetromino>()
         .add_event::<ClearRowDensities>()
         .add_event::<DebugDups>()
+        .add_event::<SpawnSquare>()
+        .add_event::<ClearBelow>()
         .insert_resource(HitMap::default())
         .insert_resource(Partitions::default())
         .insert_resource(RowDensityIndicatorMap::default())
@@ -92,7 +95,7 @@ pub fn app() {
                             BRICK_DIM * 15.0,
                             BRICK_DIM * 25.0,
                         )
-                        .with_scale_factor_override(1.0),
+                            .with_scale_factor_override(1.0),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -118,6 +121,8 @@ pub fn app() {
         .observe(clear_row_densities)
         .observe(show_colliders_in_row)
         .observe(apply_slices)
+        .observe(image_demo::spawn_blue_square)
+        .observe(image_demo::clear_below_y)
         .add_systems(
             Startup,
             (
@@ -135,7 +140,12 @@ pub fn app() {
                 reset_game.run_if(input_just_pressed(KeyCode::KeyR)),
                 reset_tetroids.run_if(input_just_pressed(KeyCode::KeyT)),
                 reset_debug_shapes.run_if(input_just_pressed(KeyCode::KeyC)),
-                    (|mut commands: Commands| commands.trigger(DebugDups)).run_if(input_just_pressed(KeyCode::KeyD)),
+                (|mut commands: Commands| commands.trigger(DebugDups)).run_if(input_just_pressed(KeyCode::KeyD)),
+                (|mut commands: Commands| commands.trigger(SpawnSquare)).run_if(input_just_pressed(KeyCode::KeyS)),
+                (|mut commands: Commands|
+                    commands
+                        .trigger(ClearBelow{ y_cutoff: BRICK_DIM * 1.0 + GROUND_Y }))
+                        .run_if(input_just_pressed(KeyCode::KeyY)),
             ),
         )
         .add_systems(
@@ -167,9 +177,9 @@ pub fn app() {
                 render_row_density,
             ),
         )
-        //        .add_systems(Startup, setup_physics)
-        //.add_systems(Update, kbd_input)
-        //.add_systems(Update, tetroid_spawner)
+    //        .add_systems(Startup, setup_physics)
+    //.add_systems(Update, kbd_input)
+    //.add_systems(Update, tetroid_spawner)
     ;
 
     //bevy_mod_debugdump::print_schedule_graph(&mut app, Update);
@@ -451,7 +461,6 @@ fn apply_slices(
                     if let Some(parts) = partitions.0.get(&child) {
                         info!("child has applicable slices");
                         for (row, part) in parts {
-
                             dbg!(row, &rows_to_slice);
                             // push part if it doesn't have applicable slices
                             if !rows_to_slice.contains(&row) {
