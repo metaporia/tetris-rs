@@ -122,7 +122,7 @@ pub fn app() {
         .observe(show_colliders_in_row)
         .observe(apply_slices)
         .observe(image_demo::spawn_blue_square)
-        .observe(image_demo::clear_below_y)
+        .observe(image_demo::clear_below)
         .add_systems(
             Startup,
             (

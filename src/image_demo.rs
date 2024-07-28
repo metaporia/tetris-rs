@@ -122,6 +122,23 @@ impl<'a> Pixels<'a> {
             image,
         }
     }
+
+    pub fn iter_mut(&'a mut self) -> EnumeratePixelsMut<'a> {
+        EnumeratePixelsMut::new(
+            self.width as u32,
+            self.image.data.rchunks_exact_mut(4),
+        )
+    }
+
+    // Clear pixels below y_cutoff. y_cutoff is expected to be in bevy's global
+    // coordinate space
+    pub fn clear_below(
+        &mut self,
+        y_cutoff: u32,
+        global_transform: &GlobalTransform,
+    ) {
+        //let x = self.into_iter();
+    }
 }
 
 impl<'a> IntoIterator for Pixels<'a> {
@@ -133,6 +150,15 @@ impl<'a> IntoIterator for Pixels<'a> {
             self.width as u32,
             self.image.data.rchunks_exact_mut(4),
         )
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Pixels<'a> {
+    type Item = (u32, u32, &'a mut [u8]);
+    type IntoIter = EnumeratePixelsMut<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 
@@ -172,8 +198,50 @@ impl<'a> Iterator for EnumeratePixelsMut<'a> {
     }
 }
 
+#[derive(Debug)]
+pub enum RgbaChannel {
+    Red,
+    Green,
+    Blue,
+    Alpha,
+}
+
+trait RgbaPixel {
+    fn raw_mut(&mut self) -> &mut [u8];
+
+    fn raw(&self) -> &[u8];
+
+    fn get_channel(&self, channel: RgbaChannel) -> u8 {
+        match channel {
+            RgbaChannel::Red => self.raw()[0],
+            RgbaChannel::Green => self.raw()[1],
+            RgbaChannel::Blue => self.raw()[2],
+            RgbaChannel::Alpha => self.raw()[3],
+        }
+    }
+
+    fn get_channel_mut(&mut self, channel: RgbaChannel) -> &mut u8 {
+        match channel {
+            RgbaChannel::Red => &mut self.raw_mut()[0],
+            RgbaChannel::Green => &mut self.raw_mut()[1],
+            RgbaChannel::Blue => &mut self.raw_mut()[2],
+            RgbaChannel::Alpha => &mut self.raw_mut()[3],
+        }
+    }
+}
+
+/// Expects the mutable slice to have four `u8`s.
+impl RgbaPixel for &mut [u8] {
+    fn raw_mut(&mut self) -> &mut [u8] {
+        self
+    }
+
+    fn raw(&self) -> &[u8] {
+        self
+    }
+}
 // manually edit resource on slice
-pub fn clear_below_y(
+pub fn clear_below(
     trigger: Trigger<ClearBelow>,
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
@@ -192,11 +260,11 @@ pub fn clear_below_y(
 
         if let Some(mut image) = images.remove(image_handle.as_mut()) {
             let mut pixels = Pixels::new(&mut image);
-            for (x, y, pixel) in pixels {
+            for (x, y, mut pixel) in pixels {
                 let local_p = Vec3::new(x as f32, y as f32, 0.0);
                 let global_p = global_transform.transform_point(local_p);
                 if global_p.y < *y_cutoff {
-                    pixel[3] = 0;
+                    *pixel.get_channel_mut(RgbaChannel::Alpha) = 0;
                 }
             }
 
