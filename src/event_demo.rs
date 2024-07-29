@@ -309,11 +309,12 @@ fn block_spawner(
     mut cmds: Commands,
     mut freeze: EventReader<Freeze>,
     mut next_tetroid: EventReader<SpawnNextTetroid>,
+    mut images: ResMut<Assets<Image>>
 ) {
     if !freeze.is_empty() || !next_tetroid.is_empty() {
         freeze.clear();
         next_tetroid.clear();
-        spawn_lblock(cmds.reborrow());
+        spawn_lblock(cmds.reborrow(), images);
     }
 }
 
@@ -1313,6 +1314,7 @@ fn reset_game(
         (With<Path>, With<Handle<ColorMaterial>>, Without<Collider>),
     >,
     mut freeze: EventReader<Freeze>,
+    mut images: ResMut<Assets<Image>>
 ) {
     freeze.clear();
     // despawn
@@ -1323,20 +1325,21 @@ fn reset_game(
         .iter()
         .for_each(|s| cmds.entity(s).despawn_recursive());
 
-    spawn_lblock(cmds);
+    spawn_lblock(cmds, images);
 }
 
 fn reset_tetroids(
     mut cmds: Commands,
     tetroids: Query<Entity, With<Tetroid>>,
     mut freeze: EventReader<Freeze>,
+    mut images: ResMut<Assets<Image>>
 ) {
     freeze.clear();
     // despawn
     tetroids
         .iter()
         .for_each(|t| cmds.entity(t).despawn_recursive());
-    spawn_lblock(cmds);
+    spawn_lblock(cmds, images);
 }
 
 #[derive(Component)]
@@ -1346,13 +1349,14 @@ fn reset_debug_shapes(
     mut cmds: Commands,
     debug_shapes: Query<Entity, With<DebugShape>>,
     mut freeze: EventReader<Freeze>,
+    mut images: ResMut<Assets<Image>>
 ) {
     freeze.clear();
     // despawn
     debug_shapes
         .iter()
         .for_each(|t| cmds.entity(t).despawn_recursive());
-    spawn_lblock(cmds);
+    spawn_lblock(cmds, images);
 }
 
 /// If no active tetroid, send spawn event.

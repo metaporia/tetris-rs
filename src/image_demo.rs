@@ -34,30 +34,39 @@ use crate::BRICK_DIM;
 ///
 /// See [this reddit post](https://www.reddit.com/r/rust_gamedev/comments/17labcg/firsttime_bevy_user_trying_to_generate_an/)
 /// for a starting point for dynamic image manipulation.
-pub fn in_memory_image() {}
+fn in_memory_image() {}
 
 /// Generate a `crate::tetroid::TetrominoType::SQUARE`-sized image filled with
-/// blue.
+/// blue outlined in black.
 pub fn blue_square() -> RgbaImage {
+    let extent = BRICK_DIM as u32;
     let mut image = ImageBuffer::new(BRICK_DIM as u32, BRICK_DIM as u32);
     for (x, y, pixel) in image.enumerate_pixels_mut() {
-        let p = image::Rgba::<u8>([0, 255, 255, 200]);
+        let mut p = image::Rgba::<u8>([0, 255, 255, 200]);
+        // check if on perimeter
+        // NOTE: unsure if this works yet as the debug covers the outline
+        if x == 0 || y == 0 || x == extent || y == extent {
+            // set to black
+            p = image::Rgba::<u8>([0,0,0,255]);
+        }
         *pixel = p;
     }
     image
 }
 
+/// Add an image to the asset server and create a `SpriteBundle` with the
+/// resultant `Handle<Image>`>
 pub fn register_and_return_sprite_bundle(
     image: RgbaImage,
-    images: Res<AssetServer>,
-) -> SpriteBundle {
+    mut images: &mut Assets<Image>,
+) -> (SquareImage, SpriteBundle) {
     let image_handle: Handle<Image> = images.add(Image::from_dynamic(
         DynamicImage::from(image),
         false,
         RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
     ));
 
-    SpriteBundle {
+    (SquareImage, SpriteBundle {
         texture: image_handle,
         //transform: Transform::from_xyz(BRICK_DIM / 2.0, BRICK_DIM / 2.0, 0.0),
         sprite: Sprite {
@@ -65,39 +74,58 @@ pub fn register_and_return_sprite_bundle(
             ..default()
         },
         ..default()
-    }
+    })
+}
+
+pub fn new_blue_square_bundle(
+    mut images: &mut Assets<Image>,
+) -> (SquareImage, SpriteBundle) {
+    let blue_square = blue_square();
+    register_and_return_sprite_bundle(blue_square, images)
 }
 
 #[derive(Event, Debug)]
 pub struct SpawnSquare;
 
+    
+
 // make simple square collider with image attached
 pub fn spawn_blue_square(
     trigger: Trigger<SpawnSquare>,
     mut commands: Commands,
-    images: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let collider = TetrominoType::square();
     let blue_square = blue_square();
     let collider_bundle = TetroidColliderBundle::new(collider, 0.0);
     let body_bundle =
         (TetrominoBundle::new(0.3), InheritedVisibility::VISIBLE);
-    let sprite_bundle = register_and_return_sprite_bundle(blue_square, images);
+    let sprite_bundle = register_and_return_sprite_bundle(blue_square, images.as_mut());
 
     commands
         .spawn(body_bundle)
         .with_children(|children| {
-            children.spawn(collider_bundle).log_components();
-            children
-                .spawn(sprite_bundle)
+            children.spawn(collider_bundle)
+                .insert(sprite_bundle)
                 .insert(SquareImage)
                 .log_components();
         })
         .log_components();
 }
 
-#[derive(Component)]
+#[derive(Component, Default, Debug)]
 pub struct SquareImage;
+
+#[derive(Bundle,Default, Debug)]
+pub struct SquareImageSpriteBundle {
+    sprite_bundle: SpriteBundle,
+    square_image: SquareImage
+}
+
+impl SquareImageSpriteBundle {
+    //pub fn new(image_handle: Handle<Image>) -> Self { }
+}
+
 
 #[derive(Event, Debug)]
 pub struct ClearBelow {

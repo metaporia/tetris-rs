@@ -8,7 +8,10 @@ use rand::Rng;
 
 pub mod components;
 
-use crate::event_demo::{Tetroid, FRICTION, GROUND_Y};
+use crate::{
+    event_demo::{Tetroid, FRICTION, GROUND_Y},
+    image_demo::new_blue_square_bundle,
+};
 use components::*;
 
 pub const BRICK_DIM: f32 = 30.0;
@@ -30,6 +33,7 @@ pub(crate) struct TetrominoBundle {
     pub gravity_scale: GravityScale,
     tetroid: Tetroid,
     tetromino_marker: Tetromino,
+    inherited_visibility: InheritedVisibility,
 }
 
 impl TetrominoBundle {
@@ -38,6 +42,7 @@ impl TetrominoBundle {
         TetrominoBundle {
             gravity_scale,
             rigid_body: RigidBody::Dynamic,
+            //inherited_visibility: InheritedVisibility::VISIBLE,
             ..Default::default()
         }
     }
@@ -59,6 +64,7 @@ pub(crate) struct TetroidColliderBundle {
     friction: Friction,
     restitution: Restitution,
     tetroid_collider_marker: TetroidCollider,
+    inherited_visibility: InheritedVisibility,
 }
 
 impl TetroidColliderBundle {
@@ -70,6 +76,7 @@ impl TetroidColliderBundle {
             collider,
             tetroid: Tetroid,
             transform_bundle: TransformBundle::IDENTITY,
+
             active_events: ActiveEvents::COLLISION_EVENTS,
             friction: Friction {
                 coefficient: friction_coefficient,
@@ -211,7 +218,10 @@ impl TetrominoType {
     ];
 }
 
-pub fn spawn_lblock(mut commands: Commands) {
+pub fn spawn_lblock(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+) {
     //let square = Collider::cuboid(BRICK_DIM / 2.0, BRICK_DIM / 2.0);
     let square = TetrominoType::square();
 
@@ -243,9 +253,15 @@ pub fn spawn_lblock(mut commands: Commands) {
                 }
                 .with_friction(FRICTION)
                 .with_starting_position(x, y);
+
+                let blue_square_bundle =
+                    new_blue_square_bundle(images.as_mut());
                 children
                     .spawn(collider_bundle)
-                    .insert(ActiveTetroidCollider);
+                    .insert(ActiveTetroidCollider)
+                    .with_children(|cs| {
+                        cs.spawn(blue_square_bundle);
+                    });
             })
         })
         .id();
