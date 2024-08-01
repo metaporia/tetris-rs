@@ -9,18 +9,21 @@
 
 use crate::arena::{clear_row_densities, rcheck_row_densities};
 use crate::image_demo::{
-    image_to_sprite_bundle, new_blue_square_bundle,
-    rgba_image_to_sprite_bundle, ClearBelow, SliceImage, SpawnSquare,
-    SquareImage,
+    apply_slice_image, image_handle_to_sprite_bundle, image_to_sprite_bundle,
+    new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow,
+    SliceImage, SpawnSquare, SquareImage,
 };
 use crate::{draw_ray, image_demo, Pause};
+use bevy::asset::transformer;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::log::{Level, LogPlugin};
+use bevy::transform::components::Transform;
 use bevy::utils::HashMap;
 use bevy::{prelude::*, window::WindowResolution};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy_prototype_lyon::entity::Path;
 use bevy_prototype_lyon::plugin::ShapePlugin;
+use bevy_rapier2d::parry::transformation;
 use bevy_rapier2d::prelude::*;
 
 use itertools::Itertools;
@@ -92,8 +95,8 @@ pub fn app() {
                         resize_constraints: WindowResizeConstraints {
                             min_width: BRICK_DIM * 13.0,
                             min_height: BRICK_DIM * 19.0,
-                            max_width: BRICK_DIM * 20.0,
-                            max_height: BRICK_DIM * 25.0 },
+                            max_width: BRICK_DIM * 30.0,
+                            max_height: BRICK_DIM * 40.0},
                         fit_canvas_to_parent: false,
                         // FIXME: fix ground alignment
                         resolution: WindowResolution::new(
@@ -164,12 +167,14 @@ pub fn app() {
                         row_intersections,
                         //show_duplicates_in_hitmap,
                         partitions,
+                        // NOTE:: `apply_slices` observer should run first
                         rcheck_row_densities,
                         despawn_tetrominos,
                         //clear_hit_map,
                         //clear_partition_map,
                     )
                         .chain(),
+                    apply_slice_image,
                     send_slice.run_if(input_just_pressed(KeyCode::Space)),
                     deactivate_tetroid,
                     unfreeze, // TODO consolidate unfreeze and handle_unfreeze
@@ -387,6 +392,13 @@ fn colliders_in_row<'a>(
         .collect()
 }
 
+struct ColliderData {
+    id: Entity,
+    image_handle: Handle<Image>,
+    transform: Transform,
+    global_transform: GlobalTransform,
+}
+
 /// Apply slices per `Tetromino`.
 ///
 /// This is an observer so it should run immediately after the calling system's
@@ -398,6 +410,7 @@ fn apply_slices(
     mut partitions: ResMut<Partitions>,
     children: Query<&Children, With<Tetromino>>,
     tetrominos: Query<Entity, With<Tetromino>>,
+    transforms: Query<(&Transform, &GlobalTransform), With<TetroidCollider>>,
     tetroid_colliders: Query<
         (Entity, &Collider, &GlobalTransform),
         With<TetroidCollider>,
@@ -458,8 +471,14 @@ fn apply_slices(
         if slice_parent {
             dbg!(slice_parent, t);
             // untouched child vertices and sliced vertices.
-            let mut hulls: Vec<(Entity, Vec<Vec2>)> = Vec::new();
+            // each element is (Collider handle, image handle, retained vertices)
+            let mut hulls: Vec<(ColliderData, Vec<Vec2>)> = Vec::new();
             for (child, (lower, upper), vertices) in child_data {
+                // get childs transform
+                let Ok((transform, global_transform)) = transforms.get(child)
+                else {
+                    break;
+                };
                 // get old image handle
                 // 1. get single child of collider, namely, it's sprite_bundle
                 let Some(sprite) =
@@ -501,12 +520,24 @@ fn apply_slices(
                     //
                     // copy old image, no image slicing required as the
                     // collider was not in a slice row
-                    let sprite_bundle =
-                        image_to_sprite_bundle(image.clone(), images.as_mut());
-                    let id = cmds.spawn(sprite_bundle).id();
+                    //let sprite_bundle =
+                    //    image_to_sprite_bundle(image.clone(), images.as_mut());
+                    //let id = cmds.spawn(sprite_bundle).id();
+                    let image_handle = images.add(image.clone());
 
+                    let collider_data = ColliderData {
+                        id: child,
+                        image_handle,
+                        transform: *transform,
+                        global_transform: *global_transform,
+                    };
                     info!("child not in row, pushing as is");
-                    hulls.push((id, vertices));
+                    hulls.push((
+                        collider_data,
+                        vertices, //.into_iter()
+                                  //.map(|p| transform_point_to_local(transform, &p))
+                                  //.collect(),
+                    ));
                 }
                 // otherwise, child has applicable slices, apply 'em
                 else {
@@ -523,24 +554,35 @@ fn apply_slices(
                                 // FIXME: will doing this inside the for-lop
                                 // over `parts` duplicate it? I'm not 100% sure
                                 // that each hull is unique in `Partitions`
-                                let sprite_bundle = image_to_sprite_bundle(
-                                    image.clone(),
-                                    images.as_mut(),
-                                );
-                                let sprite_id = cmds.spawn(sprite_bundle).id();
+                                //let sprite_bundle = image_to_sprite_bundle(
+                                //    image.clone(),
+                                //    images.as_mut(),
+                                //);
+                                //let sprite_id = cmds.spawn(sprite_bundle).id();
+                                let image_handle = images.add(image.clone());
 
-                                slice_images.send(SliceImage {
-                                    sprite_id,
-                                    rows_to_slice: rows_to_slice
-                                        .clone()
-                                        .into_iter()
-                                        .cloned()
-                                        .collect(),
-                                });
+                                //slice_images.send(SliceImage {
+                                //    image_handle,
+                                //    rows_to_slice: rows_to_slice
+                                //        .clone()
+                                //        .into_iter()
+                                //        .cloned()
+                                //        .collect(),
+                                //});
 
                                 // TODO: we should be able to just remove the
                                 // partition entry to avoid the clone
-                                hulls.push((sprite_id, part.clone()));
+                                //
+                                let collider_data = ColliderData {
+                                    id: child,
+                                    image_handle,
+                                    transform: *transform,
+                                    global_transform: *global_transform,
+                                };
+                                hulls.push((
+                                    collider_data,
+                                    part.clone(), //iter() .cloned() .map(|p| { transform_point_to_local( transform, &p,) }) .collect(),
+                                ));
                                 info!("pushing part");
                             }
                             // partition is sliced, so discard it. Likewise
@@ -557,7 +599,12 @@ fn apply_slices(
             // `spawn_hull_groups`
             //
             // This shit works.
-            spawn_hull_groups(cmds.reborrow(), hulls);
+            spawn_hull_groups(
+                cmds.reborrow(),
+                hulls,
+                images.as_mut(),
+                &mut slice_images,
+            );
 
             // despawn parent tetromino
             if let Some(mut parent_cmds) = cmds.get_entity(t) {
@@ -629,6 +676,12 @@ fn transform_point(
     global_transform: &GlobalTransform,
 ) -> impl FnMut(&Vec2) -> Vec2 + '_ {
     |p: &Vec2| global_transform.transform_point(p.extend(0.0)).xy()
+}
+
+/// Apply a `Transform` to a point in global space, converting it into the
+/// local space of the transform.
+fn transform_point_to_local(transform: &Transform, p: &Vec2) -> Vec2 {
+    transform.transform_point(p.extend(0.0)).xy()
 }
 
 fn transform_hull<'a, 'b>(
@@ -739,6 +792,19 @@ impl RowBounds {
         };
         lower..=upper
     }
+
+    #[inline]
+    pub fn contains_y(&self, y: f32) -> bool {
+        self.lower <= y && y <= self.upper
+    }
+
+    pub fn contains_vec2(&self, v: Vec2) -> bool {
+        self.contains_y(v.y)
+    }
+
+    pub fn contains_vec3(&self, v: Vec3) -> bool {
+        self.contains_y(v.y)
+    }
 }
 
 fn draw_rows(mut cmds: Commands) {
@@ -763,6 +829,15 @@ type Row = u8;
 ///
 /// NOTE: should check for x-bound and lower y
 fn is_point_in_row(row: Row) -> impl FnMut(&Vec2) -> bool {
+    move |&Vec2 { y, .. }| is_y_in_row(row)(&y)
+}
+
+/// Determines whether point's y-coordinate falls within a given `Row`.
+///
+/// Expects y-coordinate in global space.
+///
+/// NOTE: should check for x-bound and lower y
+pub fn is_y_in_row(row: Row) -> impl FnMut(&f32) -> bool {
     let r: f32 = row.into();
     let upper = (r + 1.0) * BRICK_DIM + GROUND_Y;
     let lower = if row == 0 {
@@ -770,7 +845,7 @@ fn is_point_in_row(row: Row) -> impl FnMut(&Vec2) -> bool {
     } else {
         r * BRICK_DIM + GROUND_Y
     };
-    move |&Vec2 { y, .. }| -> bool { lower <= y && y <= upper }
+    move |&y| -> bool { lower <= y && y <= upper }
 }
 
 /// Partition map of collider in row to its partitioned collider.
@@ -868,13 +943,6 @@ fn partitions(
             // Add ColliderView points and hitmap hits to partition entry for
             // key (collider, row)
             sort_convex_hull(&mut points);
-            // FIXME: test this. something in the area rendering is sometimes
-            // very broken. Could be super thin hulls?
-            //
-            // Yea it's double counting. But the area logic is sound and so is
-            // `colliders_in_row`. I checked. And were it broken it wouldn't
-            // degrade. It's the slicing logic. we're spawning tens of entities
-            // as children sometimes--all of which are identitical.
             if let Some(hull_area) = convex_hull_area(&points) {
                 if std::panic::catch_unwind(||
                     Collider::convex_hull(&points)).is_err() {
@@ -1071,43 +1139,96 @@ fn despawn_tetrominos(
 }
 
 /// Check for disconnected shapes.
+///
 /// For each group of connected hulls, spawn a `RigidBody` whose children are
 /// the members of the group.
 fn spawn_hull_groups(
     mut cmds: Commands,
-    convex_hulls: Vec<(Entity, Vec<Vec2>)>,
+    convex_hulls: Vec<(ColliderData, Vec<Vec2>)>,
+    mut images: &mut Assets<Image>,
+    mut slice_images: &mut EventWriter<SliceImage>,
 ) {
     warn!("Spawning hull groups");
     let groups = group_hulls(convex_hulls).into_values();
     for group in groups {
         assert!(!group.is_empty());
-        let colliders = group
-            .into_iter()
-            // FIXME: game threw panic here somehow. Where are the concave
-            // hulls slipping through?
-            .filter_map(|(old_collider_id, h)| {
-                if h.len() > 2 {
-                    match Collider::convex_hull(&h) {
-                        Some(collider) => Some((old_collider_id, collider)),
-                        None => {
-                            warn!("Found non-convex hull: {:?}", &h);
-                            None
-                        }
+        let colliders = group.into_iter().filter_map(|(collider_data, h)| {
+            if h.len() > 2 {
+                let ps: Vec<Vec2> = h
+                    .into_iter()
+                    .map(|p| { 
+                        let inverse = collider_data.global_transform.compute_matrix().inverse();
+                        let ip = inverse.transform_point(p.extend(0.0));
+                        ip.xy()
+                    })
+                    .collect();
+                match Collider::convex_hull(&ps) {
+                    Some(collider) => Some((collider_data, collider)),
+                    None => {
+                        warn!("Found non-convex hull: {:?}", &ps);
+                        None
                     }
-                } else {
-                    warn!(
-                        "Found non-convex hull with two or fewer points: {:?}",
-                        &h
-                    );
-                    None
                 }
-            });
+            } else {
+                warn!(
+                    "Found non-convex hull with two or fewer points: {:?}",
+                    &h
+                );
+                None
+            }
+        });
+
+        // TODO:
+        //slice_images.send(SliceImage {
+        //    image_handle,
+        //    rows_to_slice: rows_to_slice
+        //        .clone()
+        //        .into_iter()
+        //        .cloned()
+        //        .collect(),
+        //});
+
         // Post slice chunks get full gravity.
         cmds.spawn(TetrominoBundle::new(1.0))
             .with_children(|children| {
-                colliders.for_each(|(old_collider_id, col)| {
+                colliders.for_each(|(collider_data, col)| {
+                    // FIXME:
+                    // - we need the old collider's transform, since the hull
+                    //   vertices we use are actually in global space, the
+                    //   sprite inherits its transform correctly, but then
+                    //   renders at the origin.
+                    //   - The fix: apply old collider transform to new points,
+                    //     create collider with old transform.
+                    // - we also need to figure out how to send `SliceImage`.
+                    //   Could we move it back to `apply_slices`?
+
+                    // Apply transform to collider points.
                     let id = children
-                        .spawn(TetroidColliderBundle::new(col, FRICTION))
+                        .spawn(
+                            TetroidColliderBundle {
+                                collider: col,
+                                ..default()
+                            }
+                            .with_friction(FRICTION)
+                            .with_transform( collider_data .global_transform .compute_transform(),),
+                        )
+                        .with_children(|collider_children| {
+                            warn!("spawning sprite bundle");
+                            let mut sprite_bundle =
+                                image_handle_to_sprite_bundle(
+                                    collider_data.image_handle,
+                                    images,
+                                );
+                            // NOTE: appling global_transform worked for the
+                            // first slice applied to a collider. But on the
+                            // second, the image would spawn at the origin.
+                            //
+                            //sprite_bundle.1.transform =
+                            //collider_data.global_transform.compute_transform();
+                            collider_children
+                                .spawn(sprite_bundle)
+                                .log_components();
+                        })
                         .id();
                     // send SliceImage event where
                     // - SliceImage { former_handle_owner: Entity, }
@@ -1136,12 +1257,13 @@ where
 }
 
 fn group_hulls(
-    hulls: Vec<(Entity, ConvexHull)>,
-) -> HashMap<usize, Vec<(Entity, ConvexHull)>> {
-    let mut groups: HashMap<usize, Vec<(Entity, ConvexHull)>> = HashMap::new();
+    hulls: Vec<(ColliderData, ConvexHull)>,
+) -> HashMap<usize, Vec<(ColliderData, ConvexHull)>> {
+    let mut groups: HashMap<usize, Vec<(ColliderData, ConvexHull)>> =
+        HashMap::new();
     let mut group_counter: usize = 0;
 
-    for (old_collider_id, hull) in hulls {
+    for (collider_data, hull) in hulls {
         // check if hull is connected to existing group
         let mut in_group = None;
         for (id, group) in groups.iter_mut() {
@@ -1151,18 +1273,17 @@ fn group_hulls(
                 }
             }
         }
-
         match in_group {
             // if `hull` not found in existing group,
             // -> create new group containing `hull`
             None => {
-                groups.insert(group_counter, vec![(old_collider_id, hull)]);
+                groups.insert(group_counter, vec![(collider_data, hull)]);
                 group_counter += 1;
             }
             // otherwise add `hull` to group
             Some(id) => {
                 if let Some(v) = groups.get_mut(&id) {
-                    v.push((old_collider_id, hull));
+                    v.push((collider_data, hull));
                 }
             }
         }

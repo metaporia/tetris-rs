@@ -13,10 +13,10 @@ use bevy::sprite::Anchor;
 use bevy::{prelude::*, render::render_asset::RenderAssetUsages};
 use bevy_inspector_egui::inspector_egui_impls::register_std_impls;
 use bevy_rapier2d::prelude::*;
-use image::{DynamicImage, ImageBuffer, RgbaImage};
+use image::{DynamicImage, ImageBuffer, Pixel, RgbaImage};
 
 use crate::draw_circle_contact;
-use crate::event_demo::GROUND_Y;
+use crate::event_demo::{RowBounds, GROUND_Y};
 use crate::tetroid::*;
 use crate::BRICK_DIM;
 
@@ -87,6 +87,15 @@ pub fn image_to_sprite_bundle(
     mut images: &mut Assets<Image>,
 ) -> (SquareImage, SpriteBundle) {
     let image_handle: Handle<Image> = images.add(image);
+    image_handle_to_sprite_bundle(image_handle, images)
+}
+
+/// Add image to `Assets<Image>`, create new sprite bundle with the resultant
+/// image handle.
+pub fn image_handle_to_sprite_bundle(
+    image_handle: Handle<Image>,
+    mut images: &mut Assets<Image>,
+) -> (SquareImage, SpriteBundle) {
     (
         SquareImage,
         SpriteBundle {
@@ -326,19 +335,6 @@ pub fn clear_below(
     }
 }
 
-pub fn clear_pixels_below_y(
-    y_cutoff: u32,
-    image_buffer: &mut ImageBuffer<image::Rgba<u8>, Vec<u8>>,
-) {
-    for (x, y, pixel) in image_buffer.enumerate_pixels_mut() {
-        // flip since origin is top left
-        if y > y_cutoff {
-            // set alpha channel to zero
-            pixel[3] = 0;
-        }
-    }
-}
-
 #[derive(Event, Debug)]
 pub struct SliceImage {
     pub sprite_id: Entity,
@@ -352,11 +348,44 @@ pub fn apply_slice_image(
     mut slices: EventReader<SliceImage>,
     mut images: ResMut<Assets<Image>>,
     mut sprite: Query<
-        (Entity, &mut Handle<Image>, &Transform, &GlobalTransform),
+        (Entity, &mut Handle<Image>, &GlobalTransform),
         With<SquareImage>,
     >,
 ) {
-    // FIXME: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     // apply row bounds to pixels in one pass-- see `clear_below`
-    todo!();
+
+    for s @ SliceImage {
+        sprite_id,
+        rows_to_slice,
+    } in slices.read()
+    {
+        info!("{:?}", s);
+        let Ok((entity, mut image_handle, global_transform)) =
+            sprite.get(*sprite_id)
+        else {
+            warn!("apply_slice_image: sprite_id, {:?}, not found", &sprite_id);
+            break;
+        };
+
+        let Some(mut image) = images.get_mut(image_handle) else {
+            warn!("");
+            break;
+        };
+
+        info!("slicing sprite: {:?}", sprite_id);
+
+        let mut pixels = Pixels::new(image);
+        for (x, y, mut pixel) in pixels.iter_mut() {
+            let local_p = Vec3::new(x as f32, y as f32, 0.0);
+            let global_p = global_transform.transform_point(local_p);
+            //if in_row(global_p)
+            if rows_to_slice
+                .iter()
+                .filter_map(|&row| RowBounds::new(row))
+                .any(|bounds| bounds.contains_vec3(global_p))
+            {
+                *pixel.get_channel_mut(RgbaChannel::Alpha) = 0;
+            }
+        }
+    }
 }

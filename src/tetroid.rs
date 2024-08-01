@@ -46,6 +46,16 @@ impl TetrominoBundle {
             ..Default::default()
         }
     }
+
+    /// Initialize starting position with global x,y coordinates.
+    pub(crate) fn with_transform<T: Into<Transform>>(
+        mut self,
+        transform: T,
+    ) -> Self {
+        self.transform_bundle =
+            TransformBundle::from_transform(transform.into());
+        self
+    }
 }
 
 #[derive(Component, Default, Debug)]
@@ -56,15 +66,15 @@ pub struct TetroidCollider;
 /// `Tetromino`
 #[derive(Bundle, Default)]
 pub(crate) struct TetroidColliderBundle {
-    tetroid: Tetroid,
+    pub tetroid: Tetroid,
     /// FIXME: test if both child and parent need this
     pub transform_bundle: TransformBundle,
-    active_events: ActiveEvents,
-    collider: Collider,
-    friction: Friction,
-    restitution: Restitution,
-    tetroid_collider_marker: TetroidCollider,
-    inherited_visibility: InheritedVisibility,
+    pub active_events: ActiveEvents,
+    pub collider: Collider,
+    pub friction: Friction,
+    pub restitution: Restitution,
+    pub tetroid_collider_marker: TetroidCollider,
+    pub inherited_visibility: InheritedVisibility,
 }
 
 impl TetroidColliderBundle {
@@ -102,6 +112,12 @@ impl TetroidColliderBundle {
     /// Initialize starting position with global x,y coordinates.
     pub(crate) fn with_starting_position(mut self, x: f32, y: f32) -> Self {
         self.transform_bundle.local = Transform::from_xyz(x, y, 0.0);
+        self
+    }
+
+    /// Initialize starting position with global x,y coordinates.
+    pub(crate) fn with_transform(mut self, transform: Transform) -> Self {
+        self.transform_bundle = TransformBundle::from_transform(transform);
         self
     }
 }
