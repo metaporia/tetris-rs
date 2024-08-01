@@ -8,7 +8,11 @@
 //! sent.
 
 use crate::arena::{clear_row_densities, rcheck_row_densities};
-use crate::image_demo::{ClearBelow, SpawnSquare};
+use crate::image_demo::{
+    image_to_sprite_bundle, new_blue_square_bundle,
+    rgba_image_to_sprite_bundle, ClearBelow, SliceImage, SpawnSquare,
+    SquareImage,
+};
 use crate::{draw_ray, image_demo, Pause};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::log::{Level, LogPlugin};
@@ -75,6 +79,7 @@ pub fn app() {
         .add_event::<DebugDups>()
         .add_event::<SpawnSquare>()
         .add_event::<ClearBelow>()
+        .add_event::<SliceImage>()
         .insert_resource(HitMap::default())
         .insert_resource(Partitions::default())
         .insert_resource(RowDensityIndicatorMap::default())
@@ -309,7 +314,7 @@ fn block_spawner(
     mut cmds: Commands,
     mut freeze: EventReader<Freeze>,
     mut next_tetroid: EventReader<SpawnNextTetroid>,
-    mut images: ResMut<Assets<Image>>
+    mut images: ResMut<Assets<Image>>,
 ) {
     if !freeze.is_empty() || !next_tetroid.is_empty() {
         freeze.clear();
@@ -387,7 +392,7 @@ fn colliders_in_row<'a>(
 /// This is an observer so it should run immediately after the calling system's
 /// command queue is flushed (so when` partitions` finishes).
 fn apply_slices(
-    trigger: Trigger<SliceRows>, // TODO: add observer
+    trigger: Trigger<SliceRows>,
     mut cmds: Commands,
     mut despawn: EventWriter<DespawnTetromino>,
     mut partitions: ResMut<Partitions>,
@@ -397,6 +402,10 @@ fn apply_slices(
         (Entity, &Collider, &GlobalTransform),
         With<TetroidCollider>,
     >,
+    mut images: ResMut<Assets<Image>>,
+    image_handles: Query<&Handle<Image>, With<SquareImage>>,
+    collider_children: Query<&Children, With<TetroidCollider>>,
+    mut slice_images: EventWriter<SliceImage>,
 ) {
     // TODO:
     // [x] get_rows_of
@@ -440,40 +449,106 @@ fn apply_slices(
         // parent is in row, so:
         // - apply `SlicesRows` to each child
         // - send despawn event to t
+        // AND
+        // - remove child's `Handle<Image>`
+        //   - spawn new spritebundle from extracted image
+        //   - send `SliceImage { sprite_bundle_id: Entity, rows_to_slice: Vec<u8>}`
+        //     --this will handle discarding pixels
+        //   - push `(sprite_bundle_id, hull)` to hulls
         if slice_parent {
             dbg!(slice_parent, t);
             // untouched child vertices and sliced vertices.
-            let mut hulls: Vec<Vec<Vec2>> = Vec::new();
+            let mut hulls: Vec<(Entity, Vec<Vec2>)> = Vec::new();
             for (child, (lower, upper), vertices) in child_data {
+                // get old image handle
+                // 1. get single child of collider, namely, it's sprite_bundle
+                let Some(sprite) =
+                    collider_children.iter_descendants(child).next()
+                else {
+                    error!(
+                        "Found TetroidCollider, {:?}, without sprite",
+                        &child
+                    );
+                    break;
+                };
+                // 2. get `Handle<Image> component from sprite bundle
+                let Ok(image_handle) = image_handles.get(sprite) else {
+                    error!(
+                        "Found SpriteBundle, {:?}, without image handle",
+                        &sprite
+                    );
+                    break;
+                };
+
+                let Some(image) = images.remove(image_handle) else {
+                    error!("No image associated with image handle of sprite: {:?}", &sprite);
+                    break;
+                };
+
                 let rows_to_slice: Vec<&u8> =
                     slice_rows.rows_within(&lower, &upper).collect();
                 //dbg!(&child, &rows_to_slice);
                 // child not to be sliced, spawn vertices as is
                 if rows_to_slice.is_empty() {
+                    // TODO: count children and remove image from Assets<Image> to
+                    // avoid unnecessary cloning.
+                    //
+                    // TODO: in this case we could just remove the sprite
+                    // bundle from it's old parent and pass along its id
+                    // (that is, `sprite`).
+                    // Then only below would we have to actually remove the
+                    // image handle
+                    //
+                    // copy old image, no image slicing required as the
+                    // collider was not in a slice row
+                    let sprite_bundle =
+                        image_to_sprite_bundle(image.clone(), images.as_mut());
+                    let id = cmds.spawn(sprite_bundle).id();
+
                     info!("child not in row, pushing as is");
-                    hulls.push(vertices);
+                    hulls.push((id, vertices));
                 }
                 // otherwise, child has applicable slices, apply 'em
                 else {
-                    // get child's partitions
+                    // - get child's partitions
 
                     //dbg!(&partitions.0);
                     dbg!(&child);
                     if let Some(parts) = partitions.0.get(&child) {
                         info!("child has applicable slices");
                         for (row, part) in parts {
-                            dbg!(row, &rows_to_slice);
+                            //dbg!(row, &rows_to_slice);
                             // push part if it doesn't have applicable slices
                             if !rows_to_slice.contains(&row) {
+                                // FIXME: will doing this inside the for-lop
+                                // over `parts` duplicate it? I'm not 100% sure
+                                // that each hull is unique in `Partitions`
+                                let sprite_bundle = image_to_sprite_bundle(
+                                    image.clone(),
+                                    images.as_mut(),
+                                );
+                                let sprite_id = cmds.spawn(sprite_bundle).id();
+
+                                slice_images.send(SliceImage {
+                                    sprite_id,
+                                    rows_to_slice: rows_to_slice
+                                        .clone()
+                                        .into_iter()
+                                        .cloned()
+                                        .collect(),
+                                });
+
                                 // TODO: we should be able to just remove the
                                 // partition entry to avoid the clone
-                                hulls.push(part.clone());
+                                hulls.push((sprite_id, part.clone()));
                                 info!("pushing part");
                             }
+                            // partition is sliced, so discard it. Likewise
+                            // for its sprite bundle
                             info!("skipping, {}", row);
                         }
                     }
-                    warn!("child has applicable slices but partition entry not found");
+                    error!("child has applicable slices but partition entry not found");
                 }
             }
 
@@ -998,7 +1073,10 @@ fn despawn_tetrominos(
 /// Check for disconnected shapes.
 /// For each group of connected hulls, spawn a `RigidBody` whose children are
 /// the members of the group.
-fn spawn_hull_groups(mut cmds: Commands, convex_hulls: Vec<Vec<Vec2>>) {
+fn spawn_hull_groups(
+    mut cmds: Commands,
+    convex_hulls: Vec<(Entity, Vec<Vec2>)>,
+) {
     warn!("Spawning hull groups");
     let groups = group_hulls(convex_hulls).into_values();
     for group in groups {
@@ -1007,10 +1085,10 @@ fn spawn_hull_groups(mut cmds: Commands, convex_hulls: Vec<Vec<Vec2>>) {
             .into_iter()
             // FIXME: game threw panic here somehow. Where are the concave
             // hulls slipping through?
-            .filter_map(|h| {
+            .filter_map(|(old_collider_id, h)| {
                 if h.len() > 2 {
                     match Collider::convex_hull(&h) {
-                        Some(collider) => Some(collider),
+                        Some(collider) => Some((old_collider_id, collider)),
                         None => {
                             warn!("Found non-convex hull: {:?}", &h);
                             None
@@ -1027,8 +1105,14 @@ fn spawn_hull_groups(mut cmds: Commands, convex_hulls: Vec<Vec<Vec2>>) {
         // Post slice chunks get full gravity.
         cmds.spawn(TetrominoBundle::new(1.0))
             .with_children(|children| {
-                colliders.for_each(|col| {
-                    children.spawn(TetroidColliderBundle::new(col, FRICTION));
+                colliders.for_each(|(old_collider_id, col)| {
+                    let id = children
+                        .spawn(TetroidColliderBundle::new(col, FRICTION))
+                        .id();
+                    // send SliceImage event where
+                    // - SliceImage { former_handle_owner: Entity, }
+                    // - ah fuck we need the rows that were sliced to clear the
+                    //   pixels
                 })
             });
     }
@@ -1051,15 +1135,17 @@ where
     })
 }
 
-fn group_hulls(hulls: Vec<ConvexHull>) -> HashMap<usize, Vec<ConvexHull>> {
-    let mut groups: HashMap<usize, Vec<ConvexHull>> = HashMap::new();
+fn group_hulls(
+    hulls: Vec<(Entity, ConvexHull)>,
+) -> HashMap<usize, Vec<(Entity, ConvexHull)>> {
+    let mut groups: HashMap<usize, Vec<(Entity, ConvexHull)>> = HashMap::new();
     let mut group_counter: usize = 0;
 
-    for hull in hulls {
+    for (old_collider_id, hull) in hulls {
         // check if hull is connected to existing group
         let mut in_group = None;
         for (id, group) in groups.iter_mut() {
-            for h in group.iter() {
+            for (_, h) in group.iter() {
                 if any_shared_point(&hull, h) {
                     in_group = Some(*id);
                 }
@@ -1070,13 +1156,13 @@ fn group_hulls(hulls: Vec<ConvexHull>) -> HashMap<usize, Vec<ConvexHull>> {
             // if `hull` not found in existing group,
             // -> create new group containing `hull`
             None => {
-                groups.insert(group_counter, vec![hull]);
+                groups.insert(group_counter, vec![(old_collider_id, hull)]);
                 group_counter += 1;
             }
             // otherwise add `hull` to group
             Some(id) => {
                 if let Some(v) = groups.get_mut(&id) {
-                    v.push(hull);
+                    v.push((old_collider_id, hull));
                 }
             }
         }
@@ -1314,7 +1400,7 @@ fn reset_game(
         (With<Path>, With<Handle<ColorMaterial>>, Without<Collider>),
     >,
     mut freeze: EventReader<Freeze>,
-    mut images: ResMut<Assets<Image>>
+    mut images: ResMut<Assets<Image>>,
 ) {
     freeze.clear();
     // despawn
@@ -1332,7 +1418,7 @@ fn reset_tetroids(
     mut cmds: Commands,
     tetroids: Query<Entity, With<Tetroid>>,
     mut freeze: EventReader<Freeze>,
-    mut images: ResMut<Assets<Image>>
+    mut images: ResMut<Assets<Image>>,
 ) {
     freeze.clear();
     // despawn
@@ -1349,7 +1435,7 @@ fn reset_debug_shapes(
     mut cmds: Commands,
     debug_shapes: Query<Entity, With<DebugShape>>,
     mut freeze: EventReader<Freeze>,
-    mut images: ResMut<Assets<Image>>
+    mut images: ResMut<Assets<Image>>,
 ) {
     freeze.clear();
     // despawn

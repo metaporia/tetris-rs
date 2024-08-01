@@ -47,7 +47,7 @@ pub fn blue_square() -> RgbaImage {
         // NOTE: unsure if this works yet as the debug covers the outline
         if x == 0 || y == 0 || x == extent || y == extent {
             // set to black
-            p = image::Rgba::<u8>([0,0,0,255]);
+            p = image::Rgba::<u8>([0, 0, 0, 255]);
         }
         *pixel = p;
     }
@@ -56,7 +56,7 @@ pub fn blue_square() -> RgbaImage {
 
 /// Add an image to the asset server and create a `SpriteBundle` with the
 /// resultant `Handle<Image>`>
-pub fn register_and_return_sprite_bundle(
+pub fn rgba_image_to_sprite_bundle(
     image: RgbaImage,
     mut images: &mut Assets<Image>,
 ) -> (SquareImage, SpriteBundle) {
@@ -66,28 +66,49 @@ pub fn register_and_return_sprite_bundle(
         RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
     ));
 
-    (SquareImage, SpriteBundle {
-        texture: image_handle,
-        //transform: Transform::from_xyz(BRICK_DIM / 2.0, BRICK_DIM / 2.0, 0.0),
-        sprite: Sprite {
-            anchor: Anchor::BottomLeft,
+    (
+        SquareImage,
+        SpriteBundle {
+            texture: image_handle,
+            //transform: Transform::from_xyz(BRICK_DIM / 2.0, BRICK_DIM / 2.0, 0.0),
+            sprite: Sprite {
+                anchor: Anchor::BottomLeft,
+                ..default()
+            },
             ..default()
         },
-        ..default()
-    })
+    )
+}
+
+/// Add image to `Assets<Image>`, create new sprite bundle with the resultant
+/// image handle.
+pub fn image_to_sprite_bundle(
+    image: Image,
+    mut images: &mut Assets<Image>,
+) -> (SquareImage, SpriteBundle) {
+    let image_handle: Handle<Image> = images.add(image);
+    (
+        SquareImage,
+        SpriteBundle {
+            texture: image_handle,
+            sprite: Sprite {
+                anchor: Anchor::BottomLeft,
+                ..default()
+            },
+            ..default()
+        },
+    )
 }
 
 pub fn new_blue_square_bundle(
     mut images: &mut Assets<Image>,
 ) -> (SquareImage, SpriteBundle) {
     let blue_square = blue_square();
-    register_and_return_sprite_bundle(blue_square, images)
+    rgba_image_to_sprite_bundle(blue_square, images)
 }
 
 #[derive(Event, Debug)]
 pub struct SpawnSquare;
-
-    
 
 // make simple square collider with image attached
 pub fn spawn_blue_square(
@@ -100,12 +121,14 @@ pub fn spawn_blue_square(
     let collider_bundle = TetroidColliderBundle::new(collider, 0.0);
     let body_bundle =
         (TetrominoBundle::new(0.3), InheritedVisibility::VISIBLE);
-    let sprite_bundle = register_and_return_sprite_bundle(blue_square, images.as_mut());
+    let sprite_bundle =
+        rgba_image_to_sprite_bundle(blue_square, images.as_mut());
 
     commands
         .spawn(body_bundle)
         .with_children(|children| {
-            children.spawn(collider_bundle)
+            children
+                .spawn(collider_bundle)
                 .insert(sprite_bundle)
                 .insert(SquareImage)
                 .log_components();
@@ -116,16 +139,15 @@ pub fn spawn_blue_square(
 #[derive(Component, Default, Debug)]
 pub struct SquareImage;
 
-#[derive(Bundle,Default, Debug)]
+#[derive(Bundle, Default, Debug)]
 pub struct SquareImageSpriteBundle {
     sprite_bundle: SpriteBundle,
-    square_image: SquareImage
+    square_image: SquareImage,
 }
 
 impl SquareImageSpriteBundle {
     //pub fn new(image_handle: Handle<Image>) -> Self { }
 }
-
 
 #[derive(Event, Debug)]
 pub struct ClearBelow {
@@ -268,19 +290,22 @@ impl RgbaPixel for &mut [u8] {
         self
     }
 }
+
+// TODO: repllace with `Trigger<SliceImage>`
+//
 // manually edit resource on slice
 pub fn clear_below(
     trigger: Trigger<ClearBelow>,
-    mut commands: Commands,
+    //mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut square: Query<
-        (Entity, &mut Handle<Image>, &Transform, &GlobalTransform),
+        (Entity, &mut Handle<Image>, &GlobalTransform),
         With<SquareImage>,
     >,
 ) {
     let ClearBelow { y_cutoff } = trigger.event();
     info!("{:?}", trigger.event());
-    if let Ok((entity, mut image_handle, transform, global_transform)) =
+    if let Ok((entity, mut image_handle, global_transform)) =
         square.get_single_mut()
     {
         // NOTE: rounding from cast could be an issue
@@ -312,4 +337,26 @@ pub fn clear_pixels_below_y(
             pixel[3] = 0;
         }
     }
+}
+
+#[derive(Event, Debug)]
+pub struct SliceImage {
+    pub sprite_id: Entity,
+    pub rows_to_slice: Vec<u8>,
+}
+
+/// NOTE: this must be scheduled /after/ the sprite being sliced has been added
+/// to a rigid body or the global transform will be wrong (it could take a
+/// frame to propagate, so expect some fiddling)
+pub fn apply_slice_image(
+    mut slices: EventReader<SliceImage>,
+    mut images: ResMut<Assets<Image>>,
+    mut sprite: Query<
+        (Entity, &mut Handle<Image>, &Transform, &GlobalTransform),
+        With<SquareImage>,
+    >,
+) {
+    // FIXME: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // apply row bounds to pixels in one pass-- see `clear_below`
+    todo!();
 }
