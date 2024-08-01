@@ -95,8 +95,8 @@ pub fn app() {
                         resize_constraints: WindowResizeConstraints {
                             min_width: BRICK_DIM * 13.0,
                             min_height: BRICK_DIM * 19.0,
-                            max_width: BRICK_DIM * 30.0,
-                            max_height: BRICK_DIM * 40.0},
+                            max_width: BRICK_DIM * 15.0,
+                            max_height: BRICK_DIM * 26.0},
                         fit_canvas_to_parent: false,
                         // FIXME: fix ground alignment
                         resolution: WindowResolution::new(
@@ -163,6 +163,7 @@ pub fn app() {
                     //tetroid_hit,
                     tetroid_hit_compound,
                     freeze,
+                    apply_slice_image,
                     (
                         row_intersections,
                         //show_duplicates_in_hitmap,
@@ -174,7 +175,6 @@ pub fn app() {
                         //clear_partition_map,
                     )
                         .chain(),
-                    apply_slice_image,
                     send_slice.run_if(input_just_pressed(KeyCode::Space)),
                     deactivate_tetroid,
                     unfreeze, // TODO consolidate unfreeze and handle_unfreeze
@@ -604,6 +604,7 @@ fn apply_slices(
                 hulls,
                 images.as_mut(),
                 &mut slice_images,
+                slice_rows,
             );
 
             // despawn parent tetromino
@@ -672,7 +673,7 @@ fn get_rows_of(
 
 /// Takes a `GlobalTransform` and returns a closuer that applies the transform
 /// to a `Vec2` with the necessary conversions to and from `Vec3`.
-fn transform_point(
+pub fn transform_point(
     global_transform: &GlobalTransform,
 ) -> impl FnMut(&Vec2) -> Vec2 + '_ {
     |p: &Vec2| global_transform.transform_point(p.extend(0.0)).xy()
@@ -793,9 +794,14 @@ impl RowBounds {
         lower..=upper
     }
 
+    /// If row is 0, then it adds extra padding
     #[inline]
     pub fn contains_y(&self, y: f32) -> bool {
-        self.lower <= y && y <= self.upper
+        let mut lower = self.lower;
+        if self.row == 0 {
+            lower -= 30.0;
+        }
+        lower <= y && y <= self.upper
     }
 
     pub fn contains_vec2(&self, v: Vec2) -> bool {
@@ -1147,6 +1153,7 @@ fn spawn_hull_groups(
     convex_hulls: Vec<(ColliderData, Vec<Vec2>)>,
     mut images: &mut Assets<Image>,
     mut slice_images: &mut EventWriter<SliceImage>,
+    slice_rows: &SliceRows,
 ) {
     warn!("Spawning hull groups");
     let groups = group_hulls(convex_hulls).into_values();
@@ -1156,8 +1163,11 @@ fn spawn_hull_groups(
             if h.len() > 2 {
                 let ps: Vec<Vec2> = h
                     .into_iter()
-                    .map(|p| { 
-                        let inverse = collider_data.global_transform.compute_matrix().inverse();
+                    .map(|p| {
+                        let inverse = collider_data
+                            .global_transform
+                            .compute_matrix()
+                            .inverse();
                         let ip = inverse.transform_point(p.extend(0.0));
                         ip.xy()
                     })
@@ -1210,7 +1220,11 @@ fn spawn_hull_groups(
                                 ..default()
                             }
                             .with_friction(FRICTION)
-                            .with_transform( collider_data .global_transform .compute_transform(),),
+                            .with_transform(
+                                collider_data
+                                    .global_transform
+                                    .compute_transform(),
+                            ),
                         )
                         .with_children(|collider_children| {
                             warn!("spawning sprite bundle");
@@ -1225,9 +1239,13 @@ fn spawn_hull_groups(
                             //
                             //sprite_bundle.1.transform =
                             //collider_data.global_transform.compute_transform();
-                            collider_children
-                                .spawn(sprite_bundle)
-                                .log_components();
+                            let sprite_id =
+                                collider_children.spawn(sprite_bundle).id();
+
+                            slice_images.send(SliceImage {
+                                sprite_id,
+                                slice_rows: slice_rows.clone(),
+                            });
                         })
                         .id();
                     // send SliceImage event where
@@ -1300,7 +1318,7 @@ fn send_slice(
 ) {
     // FIXME: Yea it's fucking broken. Not even worth debugging the area bug
     // until we sort out multiple slices
-    commands.trigger(SliceRows { rows: vec![0] });
+    commands.trigger(SliceRows { rows: vec![0,1] });
     // slices.send(SliceRow { row: 2 });
     unfreeze.send(UnFreeze);
 }
@@ -1310,7 +1328,7 @@ pub struct SliceRow {
     pub row: u8,
 }
 
-#[derive(Event, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Event, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct SliceRows {
     pub rows: Vec<u8>,
 }

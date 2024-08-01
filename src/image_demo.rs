@@ -6,8 +6,9 @@
 //! - A third option would be a vertex shader (if it works in 2d) and adjust
 //!   the clipping coordinates to exclude slices.
 
-use std::slice::RChunksExactMut;
+use std::slice::{ChunksExactMut, RChunksExactMut};
 
+use bevy::math::VectorSpace;
 use bevy::render::render_resource::TextureFormat;
 use bevy::sprite::Anchor;
 use bevy::{prelude::*, render::render_asset::RenderAssetUsages};
@@ -15,10 +16,10 @@ use bevy_inspector_egui::inspector_egui_impls::register_std_impls;
 use bevy_rapier2d::prelude::*;
 use image::{DynamicImage, ImageBuffer, Pixel, RgbaImage};
 
-use crate::draw_circle_contact;
-use crate::event_demo::{RowBounds, GROUND_Y};
+use crate::event_demo::{transform_point, RowBounds, SliceRows, GROUND_Y};
 use crate::tetroid::*;
 use crate::BRICK_DIM;
+use crate::{draw_circle_contact, ActiveTetroid};
 
 /// Let's first go the in-memory, software route and instead of loading actual
 /// assets, lets just fill an image buffer with a color and see if we can trim
@@ -128,13 +129,13 @@ pub fn spawn_blue_square(
     let collider = TetrominoType::square();
     let blue_square = blue_square();
     let collider_bundle = TetroidColliderBundle::new(collider, 0.0);
-    let body_bundle =
-        (TetrominoBundle::new(0.3), InheritedVisibility::VISIBLE);
+    let body_bundle = TetrominoBundle::new(0.3);
     let sprite_bundle =
         rgba_image_to_sprite_bundle(blue_square, images.as_mut());
 
     commands
         .spawn(body_bundle)
+        .insert(ActiveTetroid)
         .with_children(|children| {
             children
                 .spawn(collider_bundle)
@@ -182,10 +183,14 @@ impl<'a> Pixels<'a> {
         }
     }
 
+    pub fn dims(&self) -> Vec2 {
+        self.image.size().as_vec2()
+    }
+
     pub fn iter_mut(&'a mut self) -> EnumeratePixelsMut<'a> {
         EnumeratePixelsMut::new(
             self.width as u32,
-            self.image.data.rchunks_exact_mut(4),
+            self.image.data.chunks_exact_mut(4),
         )
     }
 
@@ -207,7 +212,7 @@ impl<'a> IntoIterator for Pixels<'a> {
     fn into_iter(self) -> Self::IntoIter {
         EnumeratePixelsMut::new(
             self.width as u32,
-            self.image.data.rchunks_exact_mut(4),
+            self.image.data.chunks_exact_mut(4),
         )
     }
 }
@@ -226,11 +231,11 @@ pub struct EnumeratePixelsMut<'a> {
     x: u32,
     y: u32,
     /// We want this to be `&mut [u8; 4]`
-    pixels: RChunksExactMut<'a, u8>,
+    pixels: ChunksExactMut<'a, u8>,
 }
 
 impl<'a> EnumeratePixelsMut<'a> {
-    pub fn new(width: u32, pixels: RChunksExactMut<'a, u8>) -> Self {
+    pub fn new(width: u32, pixels: ChunksExactMut<'a, u8>) -> Self {
         Self {
             width,
             x: 0,
@@ -338,7 +343,7 @@ pub fn clear_below(
 #[derive(Event, Debug)]
 pub struct SliceImage {
     pub sprite_id: Entity,
-    pub rows_to_slice: Vec<u8>,
+    pub slice_rows: SliceRows,
 }
 
 /// NOTE: this must be scheduled /after/ the sprite being sliced has been added
@@ -351,12 +356,13 @@ pub fn apply_slice_image(
         (Entity, &mut Handle<Image>, &GlobalTransform),
         With<SquareImage>,
     >,
+    mut cmds: Commands,
 ) {
     // apply row bounds to pixels in one pass-- see `clear_below`
 
     for s @ SliceImage {
         sprite_id,
-        rows_to_slice,
+        slice_rows,
     } in slices.read()
     {
         info!("{:?}", s);
@@ -373,13 +379,16 @@ pub fn apply_slice_image(
         };
 
         info!("slicing sprite: {:?}", sprite_id);
+        let origin = Vec2::ZERO;
 
         let mut pixels = Pixels::new(image);
+        let height = pixels.width;
         for (x, y, mut pixel) in pixels.iter_mut() {
-            let local_p = Vec3::new(x as f32, y as f32, 0.0);
+            let local_p = Vec3::new( x as f32,  height - y as f32, 0.0);
             let global_p = global_transform.transform_point(local_p);
             //if in_row(global_p)
-            if rows_to_slice
+            if slice_rows
+                .rows
                 .iter()
                 .filter_map(|&row| RowBounds::new(row))
                 .any(|bounds| bounds.contains_vec3(global_p))

@@ -182,7 +182,7 @@ pub fn rcheck_row_densities(
             None
         }
     }); // .sorted().dedup();
-    let Some(slice_rows) = SliceRows::new(rows.collect()) else {
+    let Some(slice_rows) = SliceRows::new(rows.sorted().dedup().collect()) else {
         return;
     };
     commands.trigger(slice_rows)
