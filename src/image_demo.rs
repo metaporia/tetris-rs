@@ -346,9 +346,10 @@ pub struct SliceImage {
     pub slice_rows: SliceRows,
 }
 
-/// NOTE: this must be scheduled /after/ the sprite being sliced has been added
-/// to a rigid body or the global transform will be wrong (it could take a
-/// frame to propagate, so expect some fiddling)
+/// NOTE: sensitive to schedule as the globaltransforms take a frame to update
+///
+/// TODO: 
+/// - trim stray pixels (with contiguity check, I guess)
 pub fn apply_slice_image(
     mut slices: EventReader<SliceImage>,
     mut images: ResMut<Assets<Image>>,

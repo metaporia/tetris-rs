@@ -18,8 +18,6 @@ use crate::tetroid::BRICK_DIM;
 
 const OUTLINE_THICKNESS: f32 = 1.0;
 
-
-
 #[derive(Component)]
 pub struct Ground;
 
@@ -28,7 +26,6 @@ pub enum Wall {
     Left,
     Right,
 }
-
 
 /// A `Vec<Enitity>` wrapper. The nth `Entity` represents the nth row's
 /// `DensityIndicatorSquare`. Should be initialized such that
@@ -182,7 +179,8 @@ pub fn rcheck_row_densities(
             None
         }
     }); // .sorted().dedup();
-    let Some(slice_rows) = SliceRows::new(rows.sorted().dedup().collect()) else {
+    let Some(slice_rows) = SliceRows::new(rows.sorted().dedup().collect())
+    else {
         return;
     };
     commands.trigger(slice_rows)
