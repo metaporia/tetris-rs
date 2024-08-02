@@ -15,7 +15,7 @@ mod tetroid;
 use arena::{spawn_arena, Ground};
 use event_demo::{get_min_max, DebugShape, RowBounds, GROUND_Y};
 use tetroid::components::*;
-use tetroid::{spawn_lblock, BRICK_DIM};
+use tetroid::{spawn_tetromino, BRICK_DIM};
 
 // width/height of single square
 const PIXELS_PER_METER: f32 = 50.0;

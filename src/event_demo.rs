@@ -36,7 +36,7 @@ use crate::arena::{
     RowDensityIndicatorMap,
 };
 use crate::tetroid::{
-    components::*, spawn_lblock, TetroidCollider, TetroidColliderBundle,
+    components::*, spawn_tetromino, TetroidCollider, TetroidColliderBundle,
     Tetromino, TetrominoBundle, BRICK_DIM,
 };
 use crate::{draw_convex_hull, kbd_input, sort_convex_hull, v2_to_3, v3_to_2};
@@ -56,15 +56,29 @@ pub struct SpawnNextTetroid;
 #[derive(Component, Debug, Default)]
 pub struct Tetroid;
 
-const PIXELS_PER_METER: f32 = 50.0;
-const GRAVITY: f32 = 0.05;
-const VELOCITY: Velocity = Velocity {
-    linvel: Vec2::new(0.0, -100.0),
+pub const PIXELS_PER_METER: f32 = 50.0;
+pub const GRAVITY: f32 = 0.05;
+pub const VELOCITY: Velocity = Velocity {
+    linvel: Vec2::new(0.0, -105.0),
     angvel: 0.0,
 };
 pub const FRICTION: f32 = 0.3;
 
 pub const GROUND_Y: f32 = -BRICK_DIM * 18.0 / 2.0;
+
+pub const INITIAL_FALLSPEED: f32 = -105.0;
+
+#[derive(Resource)]
+pub struct FallSpeed(f32);
+
+impl FallSpeed {
+    pub fn as_velocity(&self) -> Velocity {
+        Velocity {
+            angvel: 0.0,
+            linvel: Vec2::new(0.0, self.0),
+        }
+    }
+}
 
 pub fn app() {
     let mut app = App::new();
@@ -86,6 +100,7 @@ pub fn app() {
         .insert_resource(HitMap::default())
         .insert_resource(Partitions::default())
         .insert_resource(RowDensityIndicatorMap::default())
+        .insert_resource(FallSpeed(INITIAL_FALLSPEED))
         .add_plugins(
             DefaultPlugins.build()
                 .set(WindowPlugin {
@@ -134,7 +149,7 @@ pub fn app() {
         .add_systems(
             Startup,
             (
-                spawn_lblock,
+                spawn_tetromino,
                 arena::spawn_arena,
                 //draw_rows,
                 spawn_density_indicator_column,
@@ -268,6 +283,7 @@ fn handle_unfreeze(
         With<Tetroid>,
     >,
     mut unfreeze: EventReader<UnFreeze>,
+    mut fallspeed: Res<FallSpeed>
 ) {
     if !unfreeze.is_empty() {
         unfreeze.clear();
@@ -276,7 +292,7 @@ fn handle_unfreeze(
             //sleeping.sleeping = true;
 
             //info!("Freezing all tetroids, id: {:?}, {:?}", entity, sleeping);
-            *vel = VELOCITY;
+            *vel = fallspeed.as_velocity();
             gravity.0 = 1.0;
         }
     }
@@ -320,11 +336,12 @@ fn block_spawner(
     mut freeze: EventReader<Freeze>,
     mut next_tetroid: EventReader<SpawnNextTetroid>,
     mut images: ResMut<Assets<Image>>,
+    fallspeed: Res<FallSpeed>,
 ) {
     if !freeze.is_empty() || !next_tetroid.is_empty() {
         freeze.clear();
         next_tetroid.clear();
-        spawn_lblock(cmds.reborrow(), images);
+        spawn_tetromino(cmds.reborrow(), images, fallspeed);
     }
 }
 
@@ -1596,6 +1613,7 @@ fn reset_game(
     >,
     mut freeze: EventReader<Freeze>,
     mut images: ResMut<Assets<Image>>,
+    fallspeed: Res<FallSpeed>,
 ) {
     freeze.clear();
     // despawn
@@ -1606,7 +1624,7 @@ fn reset_game(
         .iter()
         .for_each(|s| cmds.entity(s).despawn_recursive());
 
-    spawn_lblock(cmds, images);
+    spawn_tetromino(cmds, images, fallspeed);
 }
 
 fn reset_tetroids(
@@ -1614,13 +1632,14 @@ fn reset_tetroids(
     tetroids: Query<Entity, With<Tetroid>>,
     mut freeze: EventReader<Freeze>,
     mut images: ResMut<Assets<Image>>,
+    fallspeed: Res<FallSpeed>,
 ) {
     freeze.clear();
     // despawn
     tetroids
         .iter()
         .for_each(|t| cmds.entity(t).despawn_recursive());
-    spawn_lblock(cmds, images);
+    spawn_tetromino(cmds, images, fallspeed);
 }
 
 #[derive(Component)]
@@ -1631,13 +1650,14 @@ fn reset_debug_shapes(
     debug_shapes: Query<Entity, With<DebugShape>>,
     mut freeze: EventReader<Freeze>,
     mut images: ResMut<Assets<Image>>,
+    fallspeed: Res<FallSpeed>,
 ) {
     freeze.clear();
     // despawn
     debug_shapes
         .iter()
         .for_each(|t| cmds.entity(t).despawn_recursive());
-    spawn_lblock(cmds, images);
+    spawn_tetromino(cmds, images, fallspeed);
 }
 
 /// If no active tetroid, send spawn event.

@@ -9,7 +9,7 @@ use rand::Rng;
 pub mod components;
 
 use crate::{
-    event_demo::{Tetroid, FRICTION, GROUND_Y},
+    event_demo::{FallSpeed, Tetroid, FRICTION, GROUND_Y, INITIAL_FALLSPEED},
     image_demo::new_blue_square_bundle,
 };
 use components::*;
@@ -234,9 +234,10 @@ impl TetrominoType {
     ];
 }
 
-pub fn spawn_lblock(
+pub fn spawn_tetromino(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
+    fallspeed: Res<FallSpeed>,
 ) {
     //let square = Collider::cuboid(BRICK_DIM / 2.0, BRICK_DIM / 2.0);
     let square = TetrominoType::square();
@@ -245,11 +246,8 @@ pub fn spawn_lblock(
 
     // active tetroid gets lower gravity
     let mut tetromino_bundle = TetrominoBundle {
-        gravity_scale: GravityScale(0.2),
-        velocity: Velocity {
-            linvel: Vec2::new(0.0, -120.0),
-            angvel: 0.0,
-        },
+        gravity_scale: GravityScale(0.0),
+        velocity: fallspeed.as_velocity(),
         transform_bundle: TransformBundle::from(Transform::from_xyz(
             -BRICK_DIM,
             GROUND_Y + BRICK_DIM * 21.0,
