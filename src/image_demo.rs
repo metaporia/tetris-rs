@@ -183,6 +183,20 @@ impl<'a> Pixels<'a> {
         }
     }
 
+    /// Index raw image data pixel quartets.
+    pub fn get(&self, idx: usize) -> &[u8] {
+        let start = idx * 4;
+        let end = start + 4;
+        &self.image.data[start..end]
+    }
+
+    /// Index raw image data pixel quartets.
+    pub fn get_mut(&mut self, idx: usize) -> &mut [u8] {
+        let start = idx * 4;
+        let end = start + 4;
+        &mut self.image.data[start..end]
+    }
+
     pub fn dims(&self) -> Vec2 {
         self.image.size().as_vec2()
     }
@@ -344,12 +358,38 @@ pub fn clear_below(
 pub struct SliceImage {
     pub sprite_id: Entity,
     pub slice_rows: SliceRows,
+    /// The bounding x-coordinates of the sprite's parent collider in global
+    /// space. `(leftmost: f32, rightmost: f32)`
+    pub x_bounds: (f32, f32),
+    /// The bounding y-coordinates of the sprite's parent collider in global
+    /// space.`(lowest: f32, highest: f32)`
+    pub y_bounds: (f32, f32),
+}
+
+impl SliceImage {
+    /// Takes a Vec3 in global space and returns whether it is within the
+    /// sprite's parent collider's x- and y-bounds.
+    pub fn is_point_in_bounds(&self, p: Vec3) -> bool {
+        let (left, right) = self.x_bounds;
+        let (low, high) = self.y_bounds;
+        left <= p.x && p.x <= right && low <= p.y && p.y <= high
+    }
 }
 
 /// NOTE: sensitive to schedule as the globaltransforms take a frame to update
 ///
-/// TODO: 
+/// TODO:
 /// - trim stray pixels (with contiguity check, I guess)
+///
+/// - Fix 1:
+///   - remove gravity and velocity, pause the game but not the physics
+///     (entirely), so overlapping colliders have a chance to rebound into
+///     non-overlapping contact, then freeze completely and apply SliceImages.
+///     (Or, rather, after a hit that will trigger a SliceRow, wait for
+///     rebound, and then apply SliceRows and SliceImages)
+///   - pass collider's left- and right-most x and lowest and higest y, and
+///     trim all pixels outside of the bounding box.
+///
 pub fn apply_slice_image(
     mut slices: EventReader<SliceImage>,
     mut images: ResMut<Assets<Image>>,
@@ -364,6 +404,8 @@ pub fn apply_slice_image(
     for s @ SliceImage {
         sprite_id,
         slice_rows,
+        x_bounds,
+        y_bounds,
     } in slices.read()
     {
         info!("{:?}", s);
@@ -385,14 +427,16 @@ pub fn apply_slice_image(
         let mut pixels = Pixels::new(image);
         let height = pixels.width;
         for (x, y, mut pixel) in pixels.iter_mut() {
-            let local_p = Vec3::new( x as f32,  height - y as f32, 0.0);
+            let local_p = Vec3::new(x as f32, height - y as f32, 0.0);
             let global_p = global_transform.transform_point(local_p);
-            //if in_row(global_p)
+            // discard pixel if it's in a slice row or beyond the slice's x- &
+            // y-bounds
             if slice_rows
                 .rows
                 .iter()
                 .filter_map(|&row| RowBounds::new(row))
                 .any(|bounds| bounds.contains_vec3(global_p))
+                || !s.is_point_in_bounds(global_p)
             {
                 *pixel.get_channel_mut(RgbaChannel::Alpha) = 0;
             }

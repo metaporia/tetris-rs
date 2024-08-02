@@ -715,6 +715,22 @@ where
     iter.next().map(|first| iter.fold((first, first), f))
 }
 
+pub fn min_float(a: f32, b: f32) -> f32 {
+    if a <= b {
+        a
+    } else {
+        b
+    }
+}
+
+pub fn max_float(a: f32, b: f32) -> f32 {
+    if a >= b {
+        a
+    } else {
+        b
+    }
+}
+
 /// Returns all rows containing the given collider.
 fn get_min_max_of_collider(
     collider: &Collider,
@@ -1156,14 +1172,39 @@ fn spawn_hull_groups(
     slice_rows: &SliceRows,
 ) {
     warn!("Spawning hull groups");
+    // Note: bounds are in global space to avoid conversion back in
+    // `apply_slice_image`
     let groups = group_hulls(convex_hulls).into_values();
     for group in groups {
         assert!(!group.is_empty());
         let colliders = group.into_iter().filter_map(|(collider_data, h)| {
             if h.len() > 2 {
+                let mut x_bounds: Option<(f32, f32)> = None;
+                let mut y_bounds: Option<(f32, f32)> = None;
                 let ps: Vec<Vec2> = h
                     .into_iter()
                     .map(|p| {
+                        // set bounds
+                        x_bounds = x_bounds.map_or(
+                            Some((p.x, p.x)),
+                            |(left, right)| {
+                                Some((
+                                    min_float(p.x, left),
+                                    max_float(p.x, right),
+                                ))
+                            },
+                        );
+                        y_bounds = y_bounds.map_or(
+                            Some((p.y, p.y)),
+                            |(left, right)| {
+                                Some((
+                                    min_float(p.y, left),
+                                    max_float(p.y, right),
+                                ))
+                            },
+                        );
+                        // invert global transform to get vertices in local
+                        // space
                         let inverse = collider_data
                             .global_transform
                             .compute_matrix()
@@ -1173,7 +1214,9 @@ fn spawn_hull_groups(
                     })
                     .collect();
                 match Collider::convex_hull(&ps) {
-                    Some(collider) => Some((collider_data, collider)),
+                    Some(collider) => {
+                        Some((collider_data, collider, x_bounds, y_bounds))
+                    }
                     None => {
                         warn!("Found non-convex hull: {:?}", &ps);
                         None
@@ -1201,58 +1244,71 @@ fn spawn_hull_groups(
         // Post slice chunks get full gravity.
         cmds.spawn(TetrominoBundle::new(1.0))
             .with_children(|children| {
-                colliders.for_each(|(collider_data, col)| {
-                    // FIXME:
-                    // - we need the old collider's transform, since the hull
-                    //   vertices we use are actually in global space, the
-                    //   sprite inherits its transform correctly, but then
-                    //   renders at the origin.
-                    //   - The fix: apply old collider transform to new points,
-                    //     create collider with old transform.
-                    // - we also need to figure out how to send `SliceImage`.
-                    //   Could we move it back to `apply_slices`?
+                colliders.for_each(
+                    |(collider_data, col, x_bounds, y_bounds)| {
+                        // FIXME:
+                        // - we need the old collider's transform, since the hull
+                        //   vertices we use are actually in global space, the
+                        //   sprite inherits its transform correctly, but then
+                        //   renders at the origin.
+                        //   - The fix: apply old collider transform to new points,
+                        //     create collider with old transform.
+                        // - we also need to figure out how to send `SliceImage`.
+                        //   Could we move it back to `apply_slices`?
+                        dbg!(&x_bounds);
+                        dbg!(&y_bounds);
+                        let Some(x_bounds) = x_bounds else {
+                            return;
+                        };
+                        let Some(y_bounds) = y_bounds else {
+                            return;
+                        };
 
-                    // Apply transform to collider points.
-                    let id = children
-                        .spawn(
-                            TetroidColliderBundle {
-                                collider: col,
-                                ..default()
-                            }
-                            .with_friction(FRICTION)
-                            .with_transform(
-                                collider_data
-                                    .global_transform
-                                    .compute_transform(),
-                            ),
-                        )
-                        .with_children(|collider_children| {
-                            warn!("spawning sprite bundle");
-                            let mut sprite_bundle =
-                                image_handle_to_sprite_bundle(
-                                    collider_data.image_handle,
-                                    images,
-                                );
-                            // NOTE: appling global_transform worked for the
-                            // first slice applied to a collider. But on the
-                            // second, the image would spawn at the origin.
-                            //
-                            //sprite_bundle.1.transform =
-                            //collider_data.global_transform.compute_transform();
-                            let sprite_id =
-                                collider_children.spawn(sprite_bundle).id();
+                        // Apply transform to collider points.
+                        let id = children
+                            .spawn(
+                                TetroidColliderBundle {
+                                    collider: col,
+                                    ..default()
+                                }
+                                .with_friction(FRICTION)
+                                .with_transform(
+                                    collider_data
+                                        .global_transform
+                                        .compute_transform(),
+                                ),
+                            )
+                            .with_children(|collider_children| {
+                                warn!("spawning sprite bundle");
+                                let mut sprite_bundle =
+                                    image_handle_to_sprite_bundle(
+                                        collider_data.image_handle,
+                                        images,
+                                    );
+                                // NOTE: appling global_transform worked for the
+                                // first slice applied to a collider. But on the
+                                // second, the image would spawn at the origin.
+                                //
+                                //sprite_bundle.1.transform =
+                                //collider_data.global_transform.compute_transform();
+                                let sprite_id = collider_children
+                                    .spawn(sprite_bundle)
+                                    .id();
 
-                            slice_images.send(SliceImage {
-                                sprite_id,
-                                slice_rows: slice_rows.clone(),
-                            });
-                        })
-                        .id();
-                    // send SliceImage event where
-                    // - SliceImage { former_handle_owner: Entity, }
-                    // - ah fuck we need the rows that were sliced to clear the
-                    //   pixels
-                })
+                                slice_images.send(SliceImage {
+                                    sprite_id,
+                                    slice_rows: slice_rows.clone(),
+                                    x_bounds,
+                                    y_bounds,
+                                });
+                            })
+                            .id();
+                        // send SliceImage event where
+                        // - SliceImage { former_handle_owner: Entity, }
+                        // - ah fuck we need the rows that were sliced to clear the
+                        //   pixels
+                    },
+                )
             });
     }
 }
@@ -1318,7 +1374,7 @@ fn send_slice(
 ) {
     // FIXME: Yea it's fucking broken. Not even worth debugging the area bug
     // until we sort out multiple slices
-    commands.trigger(SliceRows { rows: vec![0,1] });
+    commands.trigger(SliceRows { rows: vec![0, 1] });
     // slices.send(SliceRow { row: 2 });
     unfreeze.send(UnFreeze);
 }
