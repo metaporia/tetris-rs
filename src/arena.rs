@@ -328,18 +328,16 @@ pub fn spawn_arena(mut commands: Commands) {
         ..Default::default()
     };
     commands
-        //.spawn((
-        //    ShapeBundle {
-        //        path: GeometryBuilder::build_as(&wall_shape),
-        //        ..default()
-        //    },
-        //    Fill::color(Color::BLACK),
-        //    Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
-        //))
-        .spawn(Wall::Left)
-        .insert(Collider::cuboid(brick_half, BRICK_DIM * 9.5))
-        .insert(Friction::new(0.0))
-        .insert(Restitution::coefficient(0.0))
+        .spawn((
+            ShapeBundle {
+                path: GeometryBuilder::build_as(&wall_shape),
+                ..default()
+            },
+            Fill::color(Color::BLACK),
+            Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
+        ))
+        .insert(Wall::Left)
+        .insert(WallPhysicsBundle::new())
         .insert(TransformBundle::from(Transform::from_xyz(
             -BRICK_DIM * 5.0 - brick_half,
             -BRICK_DIM * 0.5,
@@ -356,13 +354,40 @@ pub fn spawn_arena(mut commands: Commands) {
             //Fill::color(Color::Srgba(Srgba::BLACK)),
             Stroke::new(Color::Srgba(Srgba::BLACK), OUTLINE_THICKNESS),
         ))
-        .insert(Collider::cuboid(brick_half, BRICK_DIM * 9.5))
-        .insert(Restitution::coefficient(0.0))
-        .insert(Friction::new(0.0))
         .insert(Wall::Right)
+        .insert(WallPhysicsBundle::new())
         .insert(TransformBundle::from(Transform::from_xyz(
             BRICK_DIM * 5.0 + brick_half,
             -BRICK_DIM * 0.5,
             0.0,
         )));
+}
+
+#[derive(Bundle)]
+pub struct WallPhysicsBundle {
+    collider: Collider,
+    friction: Friction,
+    restitution: Restitution,
+}
+
+impl WallPhysicsBundle {
+    pub fn new() -> Self {
+        WallPhysicsBundle {
+            collider: Collider::cuboid(BRICK_DIM / 2.0, BRICK_DIM * 9.5),
+            restitution: Restitution::coefficient(0.0),
+            friction: Friction {
+                coefficient: 0.0,
+                combine_rule: CoefficientCombineRule::Min,
+            },
+        }
+    }
+    fn wall_shape() -> shapes::Rectangle {
+        shapes::Rectangle {
+            extents: Vect {
+                x: BRICK_DIM - OUTLINE_THICKNESS,
+                y: BRICK_DIM * 19.0 - OUTLINE_THICKNESS,
+            },
+            ..Default::default()
+        }
+    }
 }
