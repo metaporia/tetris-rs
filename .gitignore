@@ -3,3 +3,4 @@ src/old_demos.rs
 schedule*
 
 *.png
+.direnv
