@@ -10,6 +10,7 @@ use bevy_prototype_lyon::{
 };
 use bevy_rapier2d::prelude::*;
 use itertools::Itertools;
+use tetris_rs::ROW_DENSITY_THRESHOLD;
 
 use crate::event_demo::{
     DeactivateTetroid, Freeze, RowBounds, SliceRow, SliceRows, GROUND_Y, ROWS,
@@ -17,6 +18,8 @@ use crate::event_demo::{
 use crate::tetroid::BRICK_DIM;
 
 const OUTLINE_THICKNESS: f32 = 1.0;
+
+
 
 #[derive(Component)]
 pub struct Ground;
@@ -158,8 +161,11 @@ pub struct SliceTetromino {
 
 /// Bundle rows above density threshhold and trigger `SliceRows` event.
 ///
+/// As far as system ordering, this runs after `partitions` so if there is a
+/// `SliceRow`, partitions can apply it on the next `Update`.
+///
 /// See `apply_slices`.
-pub fn rcheck_row_densities(
+pub fn check_row_densities(
     mut densities: EventReader<RowDensity>,
     mut deactivate: EventWriter<DeactivateTetroid>,
     //mut slices: EventWriter<SliceTetromino>,
@@ -173,7 +179,7 @@ pub fn rcheck_row_densities(
     }
     freeze.clear();
     let rows = densities.read().filter_map(|rd| {
-        if rd.density >= 0.7 {
+        if rd.density >= ROW_DENSITY_THRESHOLD {
             Some(rd.row)
         } else {
             None
@@ -184,28 +190,6 @@ pub fn rcheck_row_densities(
         return;
     };
     commands.trigger(slice_rows)
-}
-
-/// Check for rows above the density threshhold (0.9) and if so send `SliceRow`
-/// event.
-///
-/// As far as system ordering, this runs after `partitions` so if there is a
-/// `SliceRow`, partitions can apply it on the next `Update`.
-pub fn check_row_densities(
-    mut densities: EventReader<RowDensity>,
-    mut deactivate: EventWriter<DeactivateTetroid>,
-    mut slices: EventWriter<SliceRow>,
-    mut freeze: EventReader<Freeze>,
-) {
-    densities.read().for_each(|rd| {
-        if rd.density >= 0.7 && !freeze.is_empty() {
-            freeze.clear();
-            let slice_row = SliceRow { row: rd.row };
-            info!("{:?}", &slice_row);
-            slices.send(slice_row);
-            //deactivate.send(DeactivateTetroid);
-        }
-    })
 }
 
 /// Density indicator column

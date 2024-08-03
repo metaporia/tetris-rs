@@ -10,8 +10,8 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 mod arena;
 mod event_demo;
 pub mod image_demo;
-mod tetroid;
 mod setup;
+mod tetroid;
 
 use arena::{spawn_arena, Ground};
 use event_demo::{get_min_max, DebugShape, RowBounds, GROUND_Y};
@@ -223,152 +223,43 @@ fn draw_ray(mut cmds: Commands, origin: Vec2, contact_point: Vec2) {
     ));
 }
 
-fn broken_points() -> Vec<Vec<Vec2>> {
-    vec![
-        vec![
-            Vec2::new(53.301056, -256.6482),
-            Vec2::new(61.62536, -240.0),
-            Vec2::new(28.084183, -240.0),
-            Vec2::new(26.46836, -243.23154),
-        ],
-        vec![
-            Vec2::new(26.468363, -243.23154),
-            Vec2::new(28.084183, -240.0),
-            Vec2::new(20.005463, -240.0),
-        ],
-        vec![
-            Vec2::new(13.0517025, -270.06424),
-            Vec2::new(26.468359, -243.23154),
-            Vec2::new(20.005447, -240.0),
-            Vec2::new(-5.4569855, -240.0),
-            Vec2::new(-13.780991, -256.64758),
-        ],
-        vec![
-            Vec2::new(80.13375, -270.06485),
-            Vec2::new(93.55041, -243.23216),
-            Vec2::new(87.08623, -240.0),
-            Vec2::new(61.62535, -240.0),
-            Vec2::new(53.301056, -256.6482),
-        ],
-        vec![
-            Vec2::new(120.05161, -240.11395),
-            Vec2::new(150.0516, -240.10707),
-            Vec2::new(150.0, -240.0),
-            Vec2::new(120.05124, -240.0),
-        ],
-        vec![
-            Vec2::new(120.05161, -240.11395),
-            Vec2::new(150.0516, -240.10707),
-            Vec2::new(150.0, -240.0),
-            Vec2::new(120.05124, -240.0),
-        ],
-        vec![
-            Vec2::new(150.05849, -270.07202),
-            Vec2::new(150.0516, -240.10706),
-            Vec2::new(120.05161, -240.11395),
-            Vec2::new(120.05849, -270.05576),
-        ],
-        vec![
-            Vec2::new(-78.16851, -270.05472),
-            Vec2::new(-75.5449, -270.05447),
-            Vec2::new(-77.10038, -268.7656),
-        ],
-        vec![
-            Vec2::new(-117.13181, -270.0581),
-            Vec2::new(-78.168495, -270.05472),
-            Vec2::new(-77.10038, -268.7656),
-            Vec2::new(-100.2007, -249.6247),
-        ],
-        vec![
-            Vec2::new(-117.13181, -270.0581),
-            Vec2::new(-78.168495, -270.05472),
-            Vec2::new(-77.10038, -268.7656),
-            Vec2::new(-100.2007, -249.6247),
-        ],
-        vec![
-            Vec2::new(-150.00078, -270.05225),
-            Vec2::new(-119.99673, -270.05225),
-            Vec2::new(-119.938324, -240.25386),
-            Vec2::new(-149.93826, -240.19107),
-        ],
-        vec![
-            Vec2::new(-150.00078, -270.05225),
-            Vec2::new(-119.99673, -270.05225),
-            Vec2::new(-119.938324, -240.25386),
-            Vec2::new(-149.93826, -240.19107),
-        ],
-        vec![
-            Vec2::new(-150.00078, -270.05225),
-            Vec2::new(-119.99673, -270.05225),
-            Vec2::new(-119.938324, -240.25386),
-            Vec2::new(-149.93826, -240.19107),
-        ],
-        vec![
-            Vec2::new(-150.00078, -270.05225),
-            Vec2::new(-119.99673, -270.05225),
-            Vec2::new(-119.938324, -240.25386),
-            Vec2::new(-149.93826, -240.19107),
-        ],
-        vec![
-            Vec2::new(-150.00078, -270.05225),
-            Vec2::new(-119.99673, -270.05225),
-            Vec2::new(-119.938324, -240.25386),
-            Vec2::new(-149.93826, -240.19107),
-        ],
-        vec![
-            Vec2::new(-150.00078, -270.05225),
-            Vec2::new(-119.99673, -270.05225),
-            Vec2::new(-119.938324, -240.25386),
-            Vec2::new(-149.93826, -240.19107),
-        ],
-    ]
-}
+mod window {
+    use bevy::{prelude::*, window::WindowResolution};
 
-fn test_rows_between() {
-    let Some(three) = RowBounds::new(3) else {
-        return;
-    };
-    let Some(zero) = RowBounds::new(18) else {
-        return;
-    };
-    zero.rows_between(&three).for_each(|r| {
-        dbg!(r);
-    });
+    use crate::tetroid::BRICK_DIM;
+    pub(super) fn plugin(app: &mut App) {
+        app.add_plugins(
+            DefaultPlugins
+                .build()
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Not Tetris".into(),
+                        name: Some("tetris-rs".into()),
+                        resize_constraints: WindowResizeConstraints {
+                            min_width: BRICK_DIM * 13.0,
+                            min_height: BRICK_DIM * 19.0,
+                            max_width: BRICK_DIM * 15.0,
+                            max_height: BRICK_DIM * 26.0,
+                        },
+                        fit_canvas_to_parent: false,
+                        // FIXME: fix ground alignment
+                        resolution: WindowResolution::new(
+                            BRICK_DIM * 15.0,
+                            BRICK_DIM * 25.0,
+                        )
+                        .with_scale_factor_override(1.0),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                //.disable::<LogPlugin>()
+                //.set(LogPlugin {
+                    //filter: "tetris-rs=debug,bevy_ecs=debug".to_string(),
+                 //   ..Default::default()
+                //}),
+        );
+    }
 }
-
-fn test_row_bounds() {
-    let ps = vec![
-        Vec2::new(-30.0, -164.11581),
-        Vec2::new(0.0, -164.11581),
-        Vec2::new(0.0, -134.11581),
-        Vec2::new(-30.0, -134.11581),
-    ];
-    let get_min_max_row_bounds = |cs: &Vec<Vec2>| {
-        get_min_max(cs.iter().map(|p| p.y)).and_then(|(min, max)| {
-            // calculate intersecting rows from bounds
-            RowBounds::from_y(max).and_then(|upper| {
-                RowBounds::from_y(min).map(|lower| (lower, upper))
-            })
-        })
-    };
-    let y: f32 = 0.0;
-    dbg!(GROUND_Y);
-    dbg!(BRICK_DIM);
-    dbg!(((y - GROUND_Y) / BRICK_DIM).abs() as u8);
-    dbg!(RowBounds::from_y(y));
-    dbg!(get_min_max_row_bounds(&ps));
-}
-
-fn point_cloud_convex() {
-    // TODO: fix parry2d panic: failed to convexrt point cloud to convex hull.
-    // it panicked with the below &points
-    let points = vec![
-        Vec2::new(-1.9961243, -210.0),
-        Vec2::new(-1.9961243, -210.0),
-        Vec2::new(-1.9961243, -210.0),
-    ];
-}
-
 
 mod physics {
     //! Load rapier physics plugin
@@ -389,8 +280,8 @@ mod graphics {
     use bevy::app::{App, Startup};
     use bevy_prototype_lyon::plugin::ShapePlugin;
 
-    use crate::image_demo::TetrominoAssetPlugin;
     use crate::event_demo::setup_graphics;
+    use crate::image_demo::TetrominoAssetPlugin;
 
     pub(super) fn plugin(app: &mut App) {
         app.add_plugins(TetrominoAssetPlugin)
@@ -398,3 +289,4 @@ mod graphics {
             .add_systems(Startup, setup_graphics);
     }
 }
+

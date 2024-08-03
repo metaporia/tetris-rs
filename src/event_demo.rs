@@ -23,22 +23,23 @@ use std::cmp::{Ord, Ordering};
 use std::iter::{self, once, zip};
 
 use crate::arena::{
-    self, check_row_densities, render_row_density,
-    spawn_density_indicator_column, ClearRowDensities, Ground, RowDensity,
-    RowDensityIndicatorMap,
+    self, render_row_density, spawn_density_indicator_column,
+    ClearRowDensities, Ground, RowDensity, RowDensityIndicatorMap,
 };
-use crate::arena::{clear_row_densities, rcheck_row_densities};
+use crate::arena::{clear_row_densities, check_row_densities};
 use crate::image_demo::{
     apply_slice_image, image_handle_to_sprite_bundle, image_to_sprite_bundle,
     new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow,
-    SliceImage, SquareImage, TetrominoAssetMap,
-    TetrominoAssetPlugin,
+    SliceImage, SquareImage, TetrominoAssetMap, TetrominoAssetPlugin,
 };
 use crate::tetroid::{
     components::*, spawn_tetromino, TetroidCollider, TetroidColliderBundle,
     Tetromino, TetrominoBundle, BRICK_DIM,
 };
-use crate::{draw_convex_hull, graphics, kbd_input, physics, sort_convex_hull, v2_to_3, v3_to_2};
+use crate::{
+    draw_convex_hull, graphics, kbd_input, physics, sort_convex_hull, v2_to_3,
+    v3_to_2, window,
+};
 use crate::{draw_ray, image_demo, Pause};
 
 #[derive(Event, Debug)]
@@ -87,8 +88,7 @@ impl FallSpeed {
 
 pub fn app() {
     let mut app = App::new();
-    app
-        .add_event::<Freeze>()
+    app.add_event::<Freeze>()
         .add_event::<ActiveTetrominoHit>()
         .add_event::<UnFreeze>()
         .add_event::<DeactivateTetroid>()
@@ -104,44 +104,15 @@ pub fn app() {
         .insert_resource(Partitions::default())
         .insert_resource(RowDensityIndicatorMap::default())
         .insert_resource(FallSpeed(INITIAL_FALLSPEED))
-        .add_plugins(
-            DefaultPlugins.build()
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Not Tetris".into(),
-                        name: Some("tetris-rs".into()),
-                        resize_constraints: WindowResizeConstraints {
-                            min_width: BRICK_DIM * 13.0,
-                            min_height: BRICK_DIM * 19.0,
-                            max_width: BRICK_DIM * 15.0,
-                            max_height: BRICK_DIM * 26.0},
-                        fit_canvas_to_parent: false,
-                        // FIXME: fix ground alignment
-                        resolution: WindowResolution::new(
-                            BRICK_DIM * 15.0,
-                            BRICK_DIM * 25.0,
-                        )
-                            .with_scale_factor_override(1.0),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                })
-                //.disable::<LogPlugin>()
-                .set(LogPlugin {
-                    //filter: "tetris-rs=debug,bevy_ecs=debug".to_string(),
-                    ..Default::default()
-                }),
-        )
         // Schedule graph
         //.add_plugins(bevy_mod_debugdump::CommandLineArgs)
         // Physics plugins
         //.add_plugins(WorldInspectorPlugin::new())
         //.add_plugins(RapierDebugRenderPlugin::default())
-
         // ##############
         // # MY PLUGINS #
         // ##############
-        .add_plugins((physics::plugin, graphics::plugin))
+        .add_plugins((window::plugin, physics::plugin, graphics::plugin))
         .observe(clear_row_densities)
         .observe(apply_slices)
         .observe(image_demo::clear_below)
@@ -169,14 +140,16 @@ pub fn app() {
                 (
                     //tetroid_hit,
                     tetroid_hit_compound,
-                    freeze,
-                    apply_slice_image,
+                    handle_freeze,
                     (
+                        // these two run every frame, uncoditionally
                         row_intersections,
                         partitions,
                         // NOTE:: `apply_slices` observer should run first
-                        rcheck_row_densities,
-                        despawn_tetrominos,
+                        // I'm pretty sure it's injected as ASAP in the
+                        // schedule without interrupting any systems running
+                        // when the trigger fires.
+                        check_row_densities,
                     )
                         .chain(),
                     deactivate_tetroid,
@@ -185,10 +158,11 @@ pub fn app() {
                     block_spawner,
                 )
                     .chain(),
+                despawn_tetrominos,
                 render_row_density,
+                apply_slice_image,
             ),
-        )
-    ;
+        );
 
     //bevy_mod_debugdump::print_schedule_graph(&mut app, Update);
 
@@ -242,9 +216,16 @@ fn tetroid_hit_compound(
 
 /// On ground contact remove all velocity & gravity for ActiveTetroid, remove
 /// ActiveTetroid from entity
-fn freeze(
+fn handle_freeze(
     mut tetroids: Query<
-        (Entity, &mut Velocity, &mut GravityScale, &mut Sleeping),
+        (
+            Entity,
+            &mut Velocity,
+            &mut GravityScale,
+            &mut Sleeping,
+            &mut ExternalForce,
+            &mut Damping,
+        ),
         With<Tetroid>,
     >,
     mut freeze: EventReader<Freeze>,
@@ -252,9 +233,18 @@ fn freeze(
     if !freeze.is_empty() {
         freeze.clear();
         //dbg!("in freeze, {}", tetroids.iter().len());
-        for (entity, mut vel, mut gravity, mut sleeping) in tetroids.iter_mut()
+        for (
+            entity,
+            mut vel,
+            mut gravity,
+            mut sleeping,
+            mut ext_force,
+            mut damping,
+        ) in tetroids.iter_mut()
         {
             sleeping.sleeping = true;
+            damping.linear_damping = 0.0;
+            ext_force.force = Vec2::ZERO;
 
             //info!("Freezing all tetroids, id: {:?}, {:?}", entity, sleeping);
             *vel = Velocity::zero();
