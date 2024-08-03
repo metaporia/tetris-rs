@@ -13,7 +13,7 @@ use itertools::Itertools;
 use tetris_rs::ROW_DENSITY_THRESHOLD;
 
 use crate::event_demo::{
-    DeactivateTetroid, Freeze, RowBounds, SliceRow, SliceRows, GROUND_Y, ROWS,
+    DeactivateTetromino, Freeze, RowBounds, SliceRow, SliceRows, GROUND_Y, ROWS,
 };
 use crate::tetroid::BRICK_DIM;
 
@@ -167,7 +167,6 @@ pub struct SliceTetromino {
 /// See `apply_slices`.
 pub fn check_row_densities(
     mut densities: EventReader<RowDensity>,
-    mut deactivate: EventWriter<DeactivateTetroid>,
     //mut slices: EventWriter<SliceTetromino>,
     mut freeze: EventReader<Freeze>,
     mut commands: Commands,

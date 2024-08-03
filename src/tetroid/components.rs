@@ -17,19 +17,8 @@ use bevy::ecs::component::Component;
 /* Single Block plugin */
 /// Nominal component used to label actively falling tetroid.
 #[derive(Component)]
-pub struct ActiveTetroid;
+pub struct ActiveTetromino;
 
 /// Tetroids are compound shapes made up of convex polygons
 #[derive(Component)]
-pub struct ActiveTetroidCollider;
-
-
-/// Indicates an inactive `RigidBody` in the tetroid debris field.
-/// - May be concave
-/// - Children are `DerbrisCollider`s
-#[derive(Component)]
-pub struct Debris;
-
-/// Colliders attached to inactive `RigidBody`s in tetroid debris field.
-#[derive(Component)]
-pub struct DebrisCollider;
+pub struct ActiveTetrominoCollider;

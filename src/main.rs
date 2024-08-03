@@ -28,19 +28,8 @@ fn main() {
     //image_demo::fractal();
 }
 
-#[derive(Event)]
-struct HitGround(Entity);
-
-#[derive(Event)]
-struct NextTetroid;
-
 #[derive(Component)]
 struct Row(u8);
-
-#[derive(Component, Debug)]
-struct Vertices {
-    vs: Vec<Vec2>,
-}
 
 #[derive(Event, Debug)]
 struct Pause;
@@ -54,7 +43,7 @@ fn kbd_input(
             &mut Velocity,
             &mut Damping,
         ),
-        With<ActiveTetroid>,
+        With<ActiveTetromino>,
     >,
     mut pause: EventWriter<Pause>,
     //active_tetroid_query: Query<Entity, With<ActiveTetroid>>,

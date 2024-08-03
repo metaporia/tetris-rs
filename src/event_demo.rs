@@ -26,14 +26,14 @@ use crate::arena::{
     self, render_row_density, spawn_density_indicator_column,
     ClearRowDensities, Ground, RowDensity, RowDensityIndicatorMap,
 };
-use crate::arena::{clear_row_densities, check_row_densities};
+use crate::arena::{check_row_densities, clear_row_densities};
 use crate::image_demo::{
     apply_slice_image, image_handle_to_sprite_bundle, image_to_sprite_bundle,
     new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow,
     SliceImage, SquareImage, TetrominoAssetMap, TetrominoAssetPlugin,
 };
 use crate::tetroid::{
-    components::*, spawn_tetromino, TetroidCollider, TetroidColliderBundle,
+    components::*, spawn_tetromino, TetrominoCollider, TetrominoColliderBundle,
     Tetromino, TetrominoBundle, BRICK_DIM,
 };
 use crate::{
@@ -49,11 +49,14 @@ pub struct Freeze;
 pub struct UnFreeze;
 
 #[derive(Event, Debug)]
-pub struct DeactivateTetroid;
+pub struct DeactivateTetromino;
 
 #[derive(Event, Debug)]
-pub struct SpawnNextTetroid;
+pub struct SpawnNextTetromino;
 
+/// Marks component as being either a `Tetromino` or `TetroidCollider`.
+///
+/// "Tetroid" is used in the sense of being tetromino-ish.
 #[derive(Component, Debug, Default)]
 pub struct Tetroid;
 
@@ -91,12 +94,12 @@ pub fn app() {
     app.add_event::<Freeze>()
         .add_event::<ActiveTetrominoHit>()
         .add_event::<UnFreeze>()
-        .add_event::<DeactivateTetroid>()
+        .add_event::<DeactivateTetromino>()
         .add_event::<Pause>()
         .add_event::<RowDensity>()
         //.add_event::<SliceRow>()
         .add_event::<SliceRows>()
-        .add_event::<SpawnNextTetroid>()
+        .add_event::<SpawnNextTetromino>()
         .add_event::<DespawnTetromino>()
         .add_event::<ClearRowDensities>()
         .add_event::<SliceImage>()
@@ -152,7 +155,7 @@ pub fn app() {
                         check_row_densities,
                     )
                         .chain(),
-                    deactivate_tetroid,
+                    deactivate_tetromino,
                     unfreeze, // TODO consolidate unfreeze and handle_unfreeze
                     handle_unfreeze,
                     block_spawner,
@@ -179,7 +182,7 @@ fn tetroid_hit_compound(
     mut freezes: EventWriter<Freeze>,
     mut active_tetromino_hit: EventWriter<ActiveTetrominoHit>,
     children: Query<&Children>,
-    active_tetroid: Query<Entity, With<ActiveTetroid>>,
+    active_tetroid: Query<Entity, With<ActiveTetromino>>,
     ground: Query<Entity, With<Ground>>,
     tetroids: Query<Entity, With<Tetroid>>,
     rc: Res<RapierContext>,
@@ -293,28 +296,29 @@ fn handle_unfreeze(
     }
 }
 
-fn deactivate_tetroid(
+// Check if active tetroid needs to be deactivated (has ActiveTetroidHit fired)
+fn deactivate_tetromino(
     mut cmds: Commands,
-    mut active_tetroid: Query<(Entity, &Children), With<ActiveTetroid>>,
-    mut deactivate: EventWriter<DeactivateTetroid>,
+    mut active_tetroid: Query<(Entity, &Children), With<ActiveTetromino>>,
+    mut deactivate: EventWriter<DeactivateTetromino>,
     mut freeze: EventReader<Freeze>,
 ) {
     if !freeze.is_empty() {
         if let Ok((at, children)) = active_tetroid.get_single_mut() {
-            cmds.entity(at).remove::<ActiveTetroid>();
+            cmds.entity(at).remove::<ActiveTetromino>();
             for &child in children {
-                cmds.entity(child).remove::<ActiveTetroidCollider>();
+                cmds.entity(child).remove::<ActiveTetrominoCollider>();
             }
 
             info!("DeactivateTetroid({:?})", at);
-            deactivate.send(DeactivateTetroid);
+            deactivate.send(DeactivateTetromino);
         }
         freeze.clear();
     }
 }
 
 fn unfreeze(
-    mut deactivate: EventReader<DeactivateTetroid>,
+    mut deactivate: EventReader<DeactivateTetromino>,
     mut freeze: EventReader<Freeze>,
     mut unfreeze: EventWriter<UnFreeze>,
 ) {
@@ -329,7 +333,7 @@ fn unfreeze(
 fn block_spawner(
     mut cmds: Commands,
     mut freeze: EventReader<Freeze>,
-    mut next_tetroid: EventReader<SpawnNextTetroid>,
+    mut next_tetroid: EventReader<SpawnNextTetromino>,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
     asset_map: Res<TetrominoAssetMap>,
@@ -423,14 +427,14 @@ fn apply_slices(
     mut partitions: ResMut<Partitions>,
     children: Query<&Children, With<Tetromino>>,
     tetrominos: Query<Entity, With<Tetromino>>,
-    transforms: Query<(&Transform, &GlobalTransform), With<TetroidCollider>>,
+    transforms: Query<(&Transform, &GlobalTransform), With<TetrominoCollider>>,
     tetroid_colliders: Query<
         (Entity, &Collider, &GlobalTransform),
-        With<TetroidCollider>,
+        With<TetrominoCollider>,
     >,
     mut images: ResMut<Assets<Image>>,
     image_handles: Query<&Handle<Image>, With<SquareImage>>,
-    collider_children: Query<&Children, With<TetroidCollider>>,
+    collider_children: Query<&Children, With<TetrominoCollider>>,
     mut slice_images: EventWriter<SliceImage>,
 ) {
     // TODO:
@@ -649,7 +653,7 @@ fn get_rows_of(
     children: &Query<&Children, With<Tetromino>>,
     tetroid_colliders: &Query<
         (Entity, &Collider, &GlobalTransform),
-        With<TetroidCollider>,
+        With<TetrominoCollider>,
     >,
 ) -> Vec<(Entity, (RowBounds, RowBounds), Vec<Vec2>)> {
     let get_min_max_row_bounds = |cs: &Vec<Vec2>| {
@@ -903,7 +907,7 @@ fn partitions(
     //children: Query<&Children, With<Tetromino>>,
     colliders: Query<
         (Entity, &Collider, &GlobalTransform),
-        With<TetroidCollider>,
+        With<TetrominoCollider>,
     >,
     //global_transforms: Query<&GlobalTransform>,
     //mut slices: EventReader<SliceRows>,
@@ -1280,7 +1284,7 @@ fn spawn_hull_groups(
                         // Apply transform to collider points.
                         let id = children
                             .spawn(
-                                TetroidColliderBundle {
+                                TetrominoColliderBundle {
                                     collider: col,
                                     ..default()
                                 }
@@ -1478,8 +1482,8 @@ fn convex_hull_area(convex_hull: &ConvexHull) -> Option<f32> {
 fn row_intersections(
     mut hitmap: ResMut<HitMap>,
     rc: Res<RapierContext>,
-    tetroids: Query<Entity, (With<TetroidCollider>, With<Collider>)>,
-    colliders: Query<&Collider, With<TetroidCollider>>,
+    tetroids: Query<Entity, (With<TetrominoCollider>, With<Collider>)>,
+    colliders: Query<&Collider, With<TetrominoCollider>>,
     global_transforms: Query<&GlobalTransform, With<Collider>>,
 ) {
     {
@@ -1590,7 +1594,7 @@ fn reset_game(
     mut freeze: EventReader<Freeze>,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
-    mut next_tetroid: EventWriter<SpawnNextTetroid>,
+    mut next_tetroid: EventWriter<SpawnNextTetromino>,
 ) {
     freeze.clear();
     // despawn
@@ -1602,7 +1606,7 @@ fn reset_game(
         .for_each(|s| cmds.entity(s).despawn_recursive());
 
     //spawn_tetromino(cmds, images, fallspeed);
-    next_tetroid.send(SpawnNextTetroid);
+    next_tetroid.send(SpawnNextTetromino);
 }
 
 fn reset_tetroids(
@@ -1611,14 +1615,14 @@ fn reset_tetroids(
     mut freeze: EventReader<Freeze>,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
-    mut next_tetroid: EventWriter<SpawnNextTetroid>,
+    mut next_tetroid: EventWriter<SpawnNextTetromino>,
 ) {
     freeze.clear();
     // despawn
     tetroids
         .iter()
         .for_each(|t| cmds.entity(t).despawn_recursive());
-    next_tetroid.send(SpawnNextTetroid);
+    next_tetroid.send(SpawnNextTetromino);
     //spawn_tetromino(cmds, images, fallspeed);
 }
 
@@ -1632,7 +1636,7 @@ fn reset_debug_shapes(
     mut freeze: EventReader<Freeze>,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
-    mut next_tetroid: EventWriter<SpawnNextTetroid>,
+    mut next_tetroid: EventWriter<SpawnNextTetromino>,
 ) {
     freeze.clear();
     // despawn
@@ -1640,22 +1644,22 @@ fn reset_debug_shapes(
         .iter()
         .for_each(|t| cmds.entity(t).despawn_recursive());
     //spawn_tetromino(cmds, images, fallspeed);
-    next_tetroid.send(SpawnNextTetroid);
+    next_tetroid.send(SpawnNextTetromino);
 }
 
 /// If no active tetroid, send spawn event.
 fn check_for_active_tetroid(
-    active_tetroid: Query<Entity, With<ActiveTetroid>>,
-    mut next_tetroid: EventWriter<SpawnNextTetroid>,
+    active_tetroid: Query<Entity, With<ActiveTetromino>>,
+    mut next_tetroid: EventWriter<SpawnNextTetromino>,
 ) {
     if active_tetroid.iter().next().is_none() {
-        next_tetroid.send(SpawnNextTetroid);
+        next_tetroid.send(SpawnNextTetromino);
         info!("SpawnNextTetroid")
     }
 }
 
 /// If no active tetroid, send spawn event.
-fn list_active_tetroid(active_tetroid: Query<Entity, With<ActiveTetroid>>) {
+fn list_active_tetroid(active_tetroid: Query<Entity, With<ActiveTetromino>>) {
     let len = active_tetroid.iter().len();
     if len > 1 {
         warn!("Too many active tetroids: expected 1 but found {}", len);

@@ -63,14 +63,16 @@ impl TetrominoBundle {
     }
 }
 
+/// A `Tetromino` is (initially) made up of four square colliders. This marks
+/// said colliders.
 #[derive(Component, Default, Debug)]
-pub struct TetroidCollider;
+pub struct TetrominoCollider;
 
 /// Common components of `TetroidCollider`. Provides default `TransformBundle`,
 /// collision events, and necessary marker components for a child collider of a
 /// `Tetromino`
 #[derive(Bundle, Default)]
-pub(crate) struct TetroidColliderBundle {
+pub(crate) struct TetrominoColliderBundle {
     pub tetroid: Tetroid,
     /// FIXME: test if both child and parent need this
     pub transform_bundle: TransformBundle,
@@ -78,16 +80,16 @@ pub(crate) struct TetroidColliderBundle {
     pub collider: Collider,
     pub friction: Friction,
     pub restitution: Restitution,
-    pub tetroid_collider_marker: TetroidCollider,
+    pub tetroid_collider_marker: TetrominoCollider,
     pub inherited_visibility: InheritedVisibility,
 }
 
-impl TetroidColliderBundle {
+impl TetrominoColliderBundle {
     /// Creates `TetroidColliderBundle` from `Collider`.
     ///
     /// It is assumed that `Collider` is a `Collider::convex_hull`.
     pub(crate) fn new(collider: Collider, friction_coefficient: f32) -> Self {
-        TetroidColliderBundle {
+        TetrominoColliderBundle {
             collider,
             tetroid: Tetroid,
             transform_bundle: TransformBundle::IDENTITY,
@@ -298,10 +300,10 @@ pub fn spawn_tetromino(
 
     let id2 = commands
         .spawn(tetromino_bundle)
-        .insert(ActiveTetroid)
+        .insert(ActiveTetromino)
         .with_children(|children| {
             tetromino.into_iter().for_each(|(Vec2 { x, y }, collider)| {
-                let collider_bundle = TetroidColliderBundle {
+                let collider_bundle = TetrominoColliderBundle {
                     collider,
                     ..Default::default()
                 }
@@ -317,7 +319,7 @@ pub fn spawn_tetromino(
                     new_blue_square_bundle(images.as_mut());
                 children
                     .spawn(collider_bundle)
-                    .insert(ActiveTetroidCollider)
+                    .insert(ActiveTetrominoCollider)
                     .with_children(|cs| {
                         cs.spawn(block_sprite);
                     });

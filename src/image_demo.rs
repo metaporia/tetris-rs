@@ -23,7 +23,7 @@ use std::ops::Deref;
 use crate::event_demo::{transform_point, RowBounds, SliceRows, GROUND_Y};
 use crate::tetroid::*;
 use crate::BRICK_DIM;
-use crate::{draw_circle_contact, ActiveTetroid};
+use crate::{draw_circle_contact, ActiveTetromino};
 
 /// Let's first go the in-memory, software route and instead of loading actual
 /// assets, lets just fill an image buffer with a color and see if we can trim
