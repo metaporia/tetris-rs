@@ -10,7 +10,10 @@ pub mod components;
 
 use crate::{
     event_demo::{FallSpeed, Tetroid, FRICTION, GROUND_Y, INITIAL_FALLSPEED},
-    image_demo::new_blue_square_bundle,
+    image_demo::{
+        new_blue_square_bundle, tetromino_type_to_sprite_bundle,
+        TetrominoAssetMap,
+    },
 };
 use components::*;
 
@@ -28,12 +31,14 @@ pub(crate) struct TetrominoBundle {
     rigid_body: RigidBody,
     sleeping: Sleeping,
     pub transform_bundle: TransformBundle,
+    external_forces: ExternalForce,
     external_impulse: ExternalImpulse,
     pub velocity: Velocity,
     pub gravity_scale: GravityScale,
     tetroid: Tetroid,
     tetromino_marker: Tetromino,
     inherited_visibility: InheritedVisibility,
+    damping: Damping,
 }
 
 impl TetrominoBundle {
@@ -122,7 +127,7 @@ impl TetroidColliderBundle {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum TetrominoType {
     // symmetric
     I,
@@ -136,6 +141,31 @@ pub enum TetrominoType {
 }
 
 impl TetrominoType {
+    pub fn as_idx(&self) -> usize {
+        match self {
+            Self::I => 1,
+            Self::J => 2,
+            Self::L => 3,
+            Self::O => 4,
+            Self::S => 5,
+            Self::T => 6,
+            Self::Z => 7,
+        }
+    }
+
+    pub fn from_idx(i: usize) -> Option<Self> {
+        match i {
+            1 => Some(Self::I),
+            2 => Some(Self::J),
+            3 => Some(Self::L),
+            4 => Some(Self::O),
+            5 => Some(Self::S),
+            6 => Some(Self::T),
+            7 => Some(Self::Z),
+            _ => None,
+        }
+    }
+
     /// Pick a random `Tetromino` variant.
     pub fn random() -> Option<Self> {
         let mut rng = rand::thread_rng();
@@ -184,7 +214,15 @@ impl TetrominoType {
             .collect()
     }
 
-    const VARIANTS: [Self; 4] = [Self::I, Self::O, Self::L, Self::Z];
+    const VARIANTS: [Self; 7] = [
+        Self::I,
+        Self::O,
+        Self::L,
+        Self::Z,
+        Self::J,
+        Self::T,
+        Self::S,
+    ];
 
     pub const SQUARE: [Vec2; 4] = [
         Vec2::new(0.0, 0.0),
@@ -238,11 +276,13 @@ pub fn spawn_tetromino(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
+    asset_map: Res<TetrominoAssetMap>,
 ) {
     //let square = Collider::cuboid(BRICK_DIM / 2.0, BRICK_DIM / 2.0);
     let square = TetrominoType::square();
 
-    let tetromino = TetrominoType::random_colliders().unwrap();
+    let tetromino_type = TetrominoType::random().unwrap();
+    let tetromino = tetromino_type.to_colliders();
 
     // active tetroid gets lower gravity
     let mut tetromino_bundle = TetrominoBundle {
@@ -268,13 +308,18 @@ pub fn spawn_tetromino(
                 .with_friction(FRICTION)
                 .with_starting_position(x, y);
 
+                let block_sprite = tetromino_type_to_sprite_bundle(
+                    &tetromino_type,
+                    images.as_mut(),
+                    asset_map.as_ref(),
+                );
                 let blue_square_bundle =
                     new_blue_square_bundle(images.as_mut());
                 children
                     .spawn(collider_bundle)
                     .insert(ActiveTetroidCollider)
                     .with_children(|cs| {
-                        cs.spawn(blue_square_bundle);
+                        cs.spawn(block_sprite);
                     });
             })
         })

@@ -4,3 +4,6 @@ schedule*
 
 *.png
 .direnv
+*-tetromino.png
+assets/trimmed/*
+examples

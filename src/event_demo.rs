@@ -7,13 +7,6 @@
 //! `Unfreeze` sends, the physics simulation unpauses, and `SpawnTetroid` is
 //! sent.
 
-use crate::arena::{clear_row_densities, rcheck_row_densities};
-use crate::image_demo::{
-    apply_slice_image, image_handle_to_sprite_bundle, image_to_sprite_bundle,
-    new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow,
-    SliceImage, SpawnSquare, SquareImage,
-};
-use crate::{draw_ray, image_demo, Pause};
 use bevy::asset::transformer;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::log::{Level, LogPlugin};
@@ -21,8 +14,7 @@ use bevy::transform::components::Transform;
 use bevy::utils::HashMap;
 use bevy::{prelude::*, window::WindowResolution};
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
-use bevy_prototype_lyon::entity::Path;
-use bevy_prototype_lyon::plugin::ShapePlugin;
+use bevy_prototype_lyon::{entity::Path, plugin::ShapePlugin};
 use bevy_rapier2d::parry::transformation;
 use bevy_rapier2d::prelude::*;
 
@@ -35,11 +27,16 @@ use crate::arena::{
     spawn_density_indicator_column, ClearRowDensities, Ground, RowDensity,
     RowDensityIndicatorMap,
 };
+use crate::arena::{clear_row_densities, rcheck_row_densities};
+use crate::image_demo::{
+    apply_slice_image, image_handle_to_sprite_bundle, image_to_sprite_bundle, new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow, SliceImage, SpawnSquare, SquareImage, TetrominoAssetMap, TetrominoAssetPlugin
+};
 use crate::tetroid::{
     components::*, spawn_tetromino, TetroidCollider, TetroidColliderBundle,
     Tetromino, TetrominoBundle, BRICK_DIM,
 };
 use crate::{draw_convex_hull, kbd_input, sort_convex_hull, v2_to_3, v3_to_2};
+use crate::{draw_ray, image_demo, Pause};
 
 #[derive(Event, Debug)]
 pub struct Freeze;
@@ -136,15 +133,19 @@ pub fn app() {
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(
             PIXELS_PER_METER,
         ))
-        .add_plugins(RapierDebugRenderPlugin::default())
+        //.add_plugins(RapierDebugRenderPlugin::default())
         .add_plugins(ShapePlugin)
-        // my plugins
+
+        // ##############
+        // # MY PLUGINS #
+        // ##############
+        .add_plugins(TetrominoAssetPlugin)
         .add_systems(Startup, setup_graphics)
         //.add_systems(Startup, (spawn_block, arena::spawn_arena))
         .observe(clear_row_densities)
         .observe(show_colliders_in_row)
         .observe(apply_slices)
-        .observe(image_demo::spawn_blue_square)
+        //.observe(image_demo::spawn_blue_square)
         .observe(image_demo::clear_below)
         .add_systems(
             Startup,
@@ -277,23 +278,27 @@ fn freeze(
     }
 }
 
+/// TODO: unfreeze with some momentum
 fn handle_unfreeze(
     mut tetroids: Query<
-        (Entity, &mut Velocity, &mut GravityScale, &mut Sleeping),
+        (Entity, &mut Velocity, &mut GravityScale, &mut ExternalForce, &mut Sleeping),
         With<Tetroid>,
     >,
     mut unfreeze: EventReader<UnFreeze>,
-    mut fallspeed: Res<FallSpeed>
+    mut fallspeed: Res<FallSpeed>,
 ) {
     if !unfreeze.is_empty() {
         unfreeze.clear();
         //dbg!("in freeze, {}", tetroids.iter().len());
-        for (entity, mut vel, mut gravity, sleeping) in tetroids.iter_mut() {
+        for (entity, mut vel, mut gravity, mut external_force, sleeping) in tetroids.iter_mut() {
             //sleeping.sleeping = true;
 
             //info!("Freezing all tetroids, id: {:?}, {:?}", entity, sleeping);
             *vel = fallspeed.as_velocity();
             gravity.0 = 1.0;
+            external_force.force = Vec2::ZERO;
+            external_force.torque = 0.0;
+
         }
     }
 }
@@ -337,11 +342,12 @@ fn block_spawner(
     mut next_tetroid: EventReader<SpawnNextTetroid>,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
+    asset_map: Res<TetrominoAssetMap>,
 ) {
     if !freeze.is_empty() || !next_tetroid.is_empty() {
         freeze.clear();
         next_tetroid.clear();
-        spawn_tetromino(cmds.reborrow(), images, fallspeed);
+        spawn_tetromino(cmds.reborrow(), images, fallspeed, asset_map);
     }
 }
 
@@ -785,7 +791,7 @@ fn clear_partition_map(
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct RowBounds {
+pub struct RowBounds {
     pub lower: f32,
     pub upper: f32,
     pub row: u8,
@@ -1300,7 +1306,6 @@ fn spawn_hull_groups(
                                 let mut sprite_bundle =
                                     image_handle_to_sprite_bundle(
                                         collider_data.image_handle,
-                                        images,
                                     );
                                 // NOTE: appling global_transform worked for the
                                 // first slice applied to a collider. But on the
@@ -1614,6 +1619,7 @@ fn reset_game(
     mut freeze: EventReader<Freeze>,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
+    mut next_tetroid: EventWriter<SpawnNextTetroid>,
 ) {
     freeze.clear();
     // despawn
@@ -1624,7 +1630,8 @@ fn reset_game(
         .iter()
         .for_each(|s| cmds.entity(s).despawn_recursive());
 
-    spawn_tetromino(cmds, images, fallspeed);
+    //spawn_tetromino(cmds, images, fallspeed);
+    next_tetroid.send(SpawnNextTetroid);
 }
 
 fn reset_tetroids(
@@ -1633,31 +1640,36 @@ fn reset_tetroids(
     mut freeze: EventReader<Freeze>,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
+    mut next_tetroid: EventWriter<SpawnNextTetroid>
 ) {
     freeze.clear();
     // despawn
     tetroids
         .iter()
         .for_each(|t| cmds.entity(t).despawn_recursive());
-    spawn_tetromino(cmds, images, fallspeed);
+    next_tetroid.send(SpawnNextTetroid);
+    //spawn_tetromino(cmds, images, fallspeed);
 }
 
 #[derive(Component)]
 pub(crate) struct DebugShape;
 
+    // TODO: refactor spawning as event
 fn reset_debug_shapes(
     mut cmds: Commands,
     debug_shapes: Query<Entity, With<DebugShape>>,
     mut freeze: EventReader<Freeze>,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
+    mut next_tetroid: EventWriter<SpawnNextTetroid>,
 ) {
     freeze.clear();
     // despawn
     debug_shapes
         .iter()
         .for_each(|t| cmds.entity(t).despawn_recursive());
-    spawn_tetromino(cmds, images, fallspeed);
+    //spawn_tetromino(cmds, images, fallspeed);
+    next_tetroid.send(SpawnNextTetroid);
 }
 
 /// If no active tetroid, send spawn event.

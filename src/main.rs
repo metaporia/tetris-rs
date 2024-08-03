@@ -18,7 +18,7 @@ use tetroid::components::*;
 use tetroid::{spawn_tetromino, BRICK_DIM};
 
 // width/height of single square
-const PIXELS_PER_METER: f32 = 50.0;
+const PIXELS_PER_METER: f32 = 10.0;
 
 const IMPULSE_SCALAR: f32 = 20000.0;
 
@@ -46,7 +46,10 @@ struct Pause;
 
 fn kbd_input(
     kbd_input: Res<ButtonInput<KeyCode>>,
-    mut ext_impulses: Query<&mut ExternalImpulse, With<ActiveTetroid>>,
+    mut ext_impulses: Query<
+        (&mut ExternalImpulse, &mut ExternalForce, &mut Velocity),
+        With<ActiveTetroid>,
+    >,
     mut pause: EventWriter<Pause>,
     //active_tetroid_query: Query<Entity, With<ActiveTetroid>>,
 ) {
@@ -54,40 +57,65 @@ fn kbd_input(
         pause.send(Pause);
     }
 
+    let Ok((mut ext_impulse, mut ext_force, mut velocity)) =
+        ext_impulses.get_single_mut()
+    else {
+        return;
+    };
+
+    let force = 2000000.0;
+    let torque = force * 15.0;
+    let max_vel = 230.0;
+    let max_ang_vel = 2.7;
+
     let mut torque_impulse = 0.0;
-    let torque_imp = 10.0 * IMPULSE_SCALAR;
-    if kbd_input.pressed(KeyCode::KeyZ) {
-        torque_impulse = torque_imp;
-    } else if kbd_input.pressed(KeyCode::KeyX) {
-        torque_impulse = -torque_imp;
+    let torque_imp = 13.0 * IMPULSE_SCALAR;
+    if kbd_input.pressed(KeyCode::KeyZ) && velocity.angvel < max_ang_vel {
+        ext_force.torque= torque;
+        //velocity.angvel = -max_ang_vel;
+    }
+
+    // FIXME: enable faster max angular velocity but with less momentum (reduce
+    // collider mass).
+    //
+    //
+    // - put `ColliderMassProperties` on rigibbody
+    // - remove `ColliderMassProperties` from colliders
+    // - ideally we'd like them all to rotate identicially, so identical
+    //   angular inertia & center of mass. Hopefully a point mass will do this.
+
+    // - NOTE: remove all forces on `DeactivateTetroid`
+    else if kbd_input.pressed(KeyCode::KeyX) && velocity.angvel > -max_ang_vel {
+        ext_force.torque = -torque;
+        //velocity.angvel = max_ang_vel;
+    } else {
+        ext_force.torque = 0.0;
     }
 
     let mut impulse = Vec2::new(0.0, 0.0);
-    let lateral_imp = 5.0 * IMPULSE_SCALAR;
+    let lateral_imp = 3.0 * IMPULSE_SCALAR;
     let vertical_imp = lateral_imp;
 
-    if kbd_input.pressed(KeyCode::ArrowLeft) {
-        impulse.x = -lateral_imp;
+
+    // cap angular and linear velocities
+    // otherwise apply impulses
+    if kbd_input.pressed(KeyCode::ArrowLeft) && velocity.linvel.x > -max_vel {
+        ext_force.force.x = -force;
+    } else if kbd_input.pressed(KeyCode::ArrowRight) && velocity.linvel.x < max_vel {
+        ext_force.force.x = force;
+    } else {
+        ext_force.force.x = 0.0;
     }
-    if kbd_input.pressed(KeyCode::ArrowRight) {
-        impulse.x = lateral_imp;
-    }
+
     if kbd_input.pressed(KeyCode::ArrowDown) {
-        impulse.y = -vertical_imp;
-    }
-    for mut ext_impulse in ext_impulses.iter_mut() {
-        //println!(
-        //    "impulse: {}, lateral_impulse: {}",
-        //    &impulse, &lateral_impulse
-        //);
-        //println!(
-        //    "torque: {}, lateral: {}",
-        //    &ext_impulse.torque_impulse, &ext_impulse.impulse
-        //);
-        *ext_impulse = ExternalImpulse {
-            torque_impulse,
-            impulse,
-        };
+        if velocity.linvel.y > -300.0 {
+            ext_force.force.y = -force
+        }
+    } else {
+        // TODO: apply damping if above speed limit.
+        //if velocity.linvel.y > 
+        ext_force.force.y = 0.0;
+        // slow down block until it reaches 250.
     }
 }
 

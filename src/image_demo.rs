@@ -6,15 +6,19 @@
 //! - A third option would be a vertex shader (if it works in 2d) and adjust
 //!   the clipping coordinates to exclude slices.
 
+use std::fs::File;
 use std::slice::{ChunksExactMut, RChunksExactMut};
 
 use bevy::math::VectorSpace;
 use bevy::render::render_resource::TextureFormat;
 use bevy::sprite::Anchor;
+use bevy::utils::HashMap;
 use bevy::{prelude::*, render::render_asset::RenderAssetUsages};
 use bevy_inspector_egui::inspector_egui_impls::register_std_impls;
 use bevy_rapier2d::prelude::*;
-use image::{DynamicImage, ImageBuffer, Pixel, RgbaImage};
+use image::imageops::FilterType;
+use image::{DynamicImage, GenericImageView, ImageBuffer, Pixel, RgbaImage};
+use std::ops::Deref;
 
 use crate::event_demo::{transform_point, RowBounds, SliceRows, GROUND_Y};
 use crate::tetroid::*;
@@ -88,14 +92,13 @@ pub fn image_to_sprite_bundle(
     mut images: &mut Assets<Image>,
 ) -> (SquareImage, SpriteBundle) {
     let image_handle: Handle<Image> = images.add(image);
-    image_handle_to_sprite_bundle(image_handle, images)
+    image_handle_to_sprite_bundle(image_handle)
 }
 
 /// Add image to `Assets<Image>`, create new sprite bundle with the resultant
 /// image handle.
 pub fn image_handle_to_sprite_bundle(
     image_handle: Handle<Image>,
-    mut images: &mut Assets<Image>,
 ) -> (SquareImage, SpriteBundle) {
     (
         SquareImage,
@@ -116,6 +119,143 @@ pub fn new_blue_square_bundle(
     let blue_square = blue_square();
     rgba_image_to_sprite_bundle(blue_square, images)
 }
+
+/// Takes the tetromino type and gets the associated asset.
+///
+/// Since we don't want to load block assets from the filesystem every time a
+/// `Tetromino` is spawned, let's load reference handles that don't get used,
+/// and are simple available to copy.
+///
+/// There is an asset (30x30 pixel square) indexed by `TetrominoType`.
+///
+/// But--and it's big--the assets from nottetris not split by block. Load
+/// order:
+/// - init: load tetromino assets (one png per tetromino body), slice and dice,
+///   & add the four resultant image handles (`Vec<Handle<Image>>`) into a
+///   `type TetrominoImageMap = Res<HashMap<TetrominoType, Vec<Handle<Image>>>`
+/// - spawn_new_tetromino: fetches all four assets, clones them, inserts the
+///   handles into the asset map, and returns a list of bundles.
+///   NOTE: order matters here--we could index the colliders and assets slices
+///   to ensure they get matched properly
+pub fn new_tetromino_handles(
+    mut images: Assets<Image>,
+    block_type: TetrominoType,
+) -> Vec<Handle<Image>> {
+    todo!();
+}
+
+// PLUGIN START
+pub struct TetrominoAssetPlugin;
+
+#[derive(Debug, Resource, Default, Deref, DerefMut)]
+pub struct TetrominoAssetMap(HashMap<TetrominoType, Vec<Handle<Image>>>);
+
+//impl Deref for TetrominoAssetMap {
+//    type Target = HashMap<TetrominoType, Vec<Handle<Image>>>;
+//
+//    fn deref(&self) -> &Self::Target {
+//        self.
+//    }
+//}
+
+impl Plugin for TetrominoAssetPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(TetrominoAssetMap::default())
+            .add_systems(PreStartup, load_block_assets)
+            .observe(spawn_i_block);
+    }
+}
+
+/// Demo: load png for I-block into `TetrominoAssetMwp`.
+///
+/// Must be scheduled after `TetrominoAssetMap` initialization.
+/// TODO: write wn asset loading plugin for this
+pub fn load_block_assets(
+    mut asset_map: ResMut<TetrominoAssetMap>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    // TODO: special handling for I-block as it has three distinct blocks:
+    // left, middle (2x), and right squares,
+    for i in 1..8 {
+        let block_type = TetrominoType::from_idx(i).unwrap();
+        let file_name =
+            format!("assets/scaled/{:?}-square.png", block_type.as_idx());
+        dbg!(&file_name);
+        let scaled = image::open(file_name).unwrap();
+        // TODO: add scaling here
+        //
+        //.resize_exact(
+        //    BRICK_DIM as u32 * 4,
+        //    BRICK_DIM as u32,
+        //    FilterType::Nearest,
+        //);
+        //let mut output = File::create("scaled.png").unwrap();
+        //scaled.write_to(&mut output, image::ImageFormat::Png);
+        dbg!(scaled.height(), scaled.width());
+
+        let scaled_handle = images.add(Image::from_dynamic(
+            scaled,
+            false,
+            RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+        ));
+        asset_map.insert(block_type, vec![scaled_handle]);
+    }
+}
+
+/// Clone reference block image from asset_map and return sprite bundle
+/// containing image handle referencing the cloned copy.
+pub fn tetromino_type_to_sprite_bundle(
+    block_type: &TetrominoType,
+    mut images: &mut Assets<Image>,
+    asset_map: &TetrominoAssetMap,
+) -> (SquareImage, SpriteBundle) {
+    dbg!(&block_type);
+    dbg!(&asset_map);
+    let handles = asset_map.get(block_type).unwrap();
+    let i_block_handle = handles[0].clone();
+    dbg!(&i_block_handle);
+    let new_image = images.get(&i_block_handle).unwrap().clone();
+    let new_handle = images.add(new_image);
+    image_handle_to_sprite_bundle(new_handle)
+}
+
+pub fn spawn_i_block(
+    trigger: Trigger<SpawnSquare>,
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    asset_map: Res<TetrominoAssetMap>,
+) {
+    let collider = TetrominoType::square();
+    let collider_bundle = TetroidColliderBundle::new(collider, 0.0);
+    let body_bundle = TetrominoBundle::new(0.3);
+    // new i block stuff
+    let Some(handles) = asset_map.get(&TetrominoType::I) else {
+        return;
+    };
+    let i_block_handle = handles[0].clone();
+    // leave original as reference handle
+    let new_image = images.get(&i_block_handle).unwrap().clone();
+    let new_handle = images.add(new_image);
+    let mut sprite_bundle = image_handle_to_sprite_bundle(i_block_handle);
+    // we can scale the size, but its fuzzy and won't work with the pixel
+    // clearing. Instead:
+    // TODO: use image::resize_image and create an image of the correct size
+    // from a slice of the image data from ./assets/pieces/*.png.
+    //sprite_bundle.1.sprite.custom_size = Some(Vec2::new(BRICK_DIM * 4.0, BRICK_DIM));
+
+    commands
+        .spawn(body_bundle)
+        .insert(ActiveTetroid)
+        .with_children(|children| {
+            children
+                .spawn(collider_bundle)
+                .insert(sprite_bundle)
+                .insert(SquareImage)
+                .log_components();
+        })
+        .log_components();
+}
+// PLUGIN END
 
 #[derive(Event, Debug)]
 pub struct SpawnSquare;
