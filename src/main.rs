@@ -11,6 +11,7 @@ mod arena;
 mod event_demo;
 pub mod image_demo;
 mod tetroid;
+mod setup;
 
 use arena::{spawn_arena, Ground};
 use event_demo::{get_min_max, DebugShape, RowBounds, GROUND_Y};
@@ -366,4 +367,34 @@ fn point_cloud_convex() {
         Vec2::new(-1.9961243, -210.0),
         Vec2::new(-1.9961243, -210.0),
     ];
+}
+
+
+mod physics {
+    //! Load rapier physics plugin
+    use bevy::app::App;
+    use bevy_rapier2d::plugin::{NoUserData, RapierPhysicsPlugin};
+
+    use crate::PIXELS_PER_METER;
+
+    pub(super) fn plugin(app: &mut App) {
+        app.add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(
+            PIXELS_PER_METER,
+        ));
+    }
+}
+
+mod graphics {
+    //! Load TetrominoAssetPlugin, ShapePlugin
+    use bevy::app::{App, Startup};
+    use bevy_prototype_lyon::plugin::ShapePlugin;
+
+    use crate::image_demo::TetrominoAssetPlugin;
+    use crate::event_demo::setup_graphics;
+
+    pub(super) fn plugin(app: &mut App) {
+        app.add_plugins(TetrominoAssetPlugin)
+            .add_plugins(ShapePlugin)
+            .add_systems(Startup, setup_graphics);
+    }
 }

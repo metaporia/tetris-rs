@@ -161,8 +161,7 @@ pub struct TetrominoAssetMap(HashMap<TetrominoType, Vec<Handle<Image>>>);
 impl Plugin for TetrominoAssetPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(TetrominoAssetMap::default())
-            .add_systems(PreStartup, load_block_assets)
-            .observe(spawn_i_block);
+            .add_systems(PreStartup, load_block_assets);
     }
 }
 
@@ -219,72 +218,8 @@ pub fn tetromino_type_to_sprite_bundle(
     image_handle_to_sprite_bundle(new_handle)
 }
 
-pub fn spawn_i_block(
-    trigger: Trigger<SpawnSquare>,
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-    asset_map: Res<TetrominoAssetMap>,
-) {
-    let collider = TetrominoType::square();
-    let collider_bundle = TetroidColliderBundle::new(collider, 0.0);
-    let body_bundle = TetrominoBundle::new(0.3);
-    // new i block stuff
-    let Some(handles) = asset_map.get(&TetrominoType::I) else {
-        return;
-    };
-    let i_block_handle = handles[0].clone();
-    // leave original as reference handle
-    let new_image = images.get(&i_block_handle).unwrap().clone();
-    let new_handle = images.add(new_image);
-    let mut sprite_bundle = image_handle_to_sprite_bundle(i_block_handle);
-    // we can scale the size, but its fuzzy and won't work with the pixel
-    // clearing. Instead:
-    // TODO: use image::resize_image and create an image of the correct size
-    // from a slice of the image data from ./assets/pieces/*.png.
-    //sprite_bundle.1.sprite.custom_size = Some(Vec2::new(BRICK_DIM * 4.0, BRICK_DIM));
-
-    commands
-        .spawn(body_bundle)
-        .insert(ActiveTetroid)
-        .with_children(|children| {
-            children
-                .spawn(collider_bundle)
-                .insert(sprite_bundle)
-                .insert(SquareImage)
-                .log_components();
-        })
-        .log_components();
-}
 // PLUGIN END
 
-#[derive(Event, Debug)]
-pub struct SpawnSquare;
-
-// make simple square collider with image attached
-pub fn spawn_blue_square(
-    trigger: Trigger<SpawnSquare>,
-    mut commands: Commands,
-    mut images: ResMut<Assets<Image>>,
-) {
-    let collider = TetrominoType::square();
-    let blue_square = blue_square();
-    let collider_bundle = TetroidColliderBundle::new(collider, 0.0);
-    let body_bundle = TetrominoBundle::new(0.3);
-    let sprite_bundle =
-        rgba_image_to_sprite_bundle(blue_square, images.as_mut());
-
-    commands
-        .spawn(body_bundle)
-        .insert(ActiveTetroid)
-        .with_children(|children| {
-            children
-                .spawn(collider_bundle)
-                .insert(sprite_bundle)
-                .insert(SquareImage)
-                .log_components();
-        })
-        .log_components();
-}
 
 #[derive(Component, Default, Debug)]
 pub struct SquareImage;

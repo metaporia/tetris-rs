@@ -31,14 +31,14 @@ use crate::arena::{clear_row_densities, rcheck_row_densities};
 use crate::image_demo::{
     apply_slice_image, image_handle_to_sprite_bundle, image_to_sprite_bundle,
     new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow,
-    SliceImage, SpawnSquare, SquareImage, TetrominoAssetMap,
+    SliceImage, SquareImage, TetrominoAssetMap,
     TetrominoAssetPlugin,
 };
 use crate::tetroid::{
     components::*, spawn_tetromino, TetroidCollider, TetroidColliderBundle,
     Tetromino, TetrominoBundle, BRICK_DIM,
 };
-use crate::{draw_convex_hull, kbd_input, sort_convex_hull, v2_to_3, v3_to_2};
+use crate::{draw_convex_hull, graphics, kbd_input, physics, sort_convex_hull, v2_to_3, v3_to_2};
 use crate::{draw_ray, image_demo, Pause};
 
 #[derive(Event, Debug)]
@@ -55,6 +55,11 @@ pub struct SpawnNextTetroid;
 
 #[derive(Component, Debug, Default)]
 pub struct Tetroid;
+
+/// Signal that the active tetromino has hit either the ground or another
+/// tetromino
+#[derive(Event, Debug)]
+pub struct ActiveTetrominoHit;
 
 pub const PIXELS_PER_METER: f32 = 50.0;
 pub const GRAVITY: f32 = 0.05;
@@ -84,6 +89,7 @@ pub fn app() {
     let mut app = App::new();
     app
         .add_event::<Freeze>()
+        .add_event::<ActiveTetrominoHit>()
         .add_event::<UnFreeze>()
         .add_event::<DeactivateTetroid>()
         .add_event::<Pause>()
@@ -93,9 +99,6 @@ pub fn app() {
         .add_event::<SpawnNextTetroid>()
         .add_event::<DespawnTetromino>()
         .add_event::<ClearRowDensities>()
-        .add_event::<DebugDups>()
-        .add_event::<SpawnSquare>()
-        .add_event::<ClearBelow>()
         .add_event::<SliceImage>()
         .insert_resource(HitMap::default())
         .insert_resource(Partitions::default())
@@ -132,30 +135,21 @@ pub fn app() {
         // Schedule graph
         //.add_plugins(bevy_mod_debugdump::CommandLineArgs)
         // Physics plugins
-        .add_plugins(WorldInspectorPlugin::new())
-        .add_plugins(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(
-            PIXELS_PER_METER,
-        ))
+        //.add_plugins(WorldInspectorPlugin::new())
         //.add_plugins(RapierDebugRenderPlugin::default())
-        .add_plugins(ShapePlugin)
 
         // ##############
         // # MY PLUGINS #
         // ##############
-        .add_plugins(TetrominoAssetPlugin)
-        .add_systems(Startup, setup_graphics)
-        //.add_systems(Startup, (spawn_block, arena::spawn_arena))
+        .add_plugins((physics::plugin, graphics::plugin))
         .observe(clear_row_densities)
-        .observe(show_colliders_in_row)
         .observe(apply_slices)
-        //.observe(image_demo::spawn_blue_square)
         .observe(image_demo::clear_below)
         .add_systems(
             Startup,
             (
                 spawn_tetromino,
                 arena::spawn_arena,
-                //draw_rows,
                 spawn_density_indicator_column,
             ),
         )
@@ -167,12 +161,6 @@ pub fn app() {
                 reset_game.run_if(input_just_pressed(KeyCode::KeyR)),
                 reset_tetroids.run_if(input_just_pressed(KeyCode::KeyT)),
                 reset_debug_shapes.run_if(input_just_pressed(KeyCode::KeyC)),
-                (|mut commands: Commands| commands.trigger(DebugDups)).run_if(input_just_pressed(KeyCode::KeyD)),
-                (|mut commands: Commands| commands.trigger(SpawnSquare)).run_if(input_just_pressed(KeyCode::KeyS)),
-                (|mut commands: Commands|
-                    commands
-                        .trigger(ClearBelow{ y_cutoff: BRICK_DIM * 1.0 + GROUND_Y }))
-                        .run_if(input_just_pressed(KeyCode::KeyY)),
             ),
         )
         .add_systems(
@@ -185,30 +173,21 @@ pub fn app() {
                     apply_slice_image,
                     (
                         row_intersections,
-                        //show_duplicates_in_hitmap,
                         partitions,
                         // NOTE:: `apply_slices` observer should run first
                         rcheck_row_densities,
                         despawn_tetrominos,
-                        //clear_hit_map,
-                        //clear_partition_map,
                     )
                         .chain(),
-                    send_slice.run_if(input_just_pressed(KeyCode::Space)),
                     deactivate_tetroid,
                     unfreeze, // TODO consolidate unfreeze and handle_unfreeze
                     handle_unfreeze,
                     block_spawner,
-                    //check_for_active_tetroid
-                    list_active_tetroid,
                 )
                     .chain(),
                 render_row_density,
             ),
         )
-    //        .add_systems(Startup, setup_physics)
-    //.add_systems(Update, kbd_input)
-    //.add_systems(Update, tetroid_spawner)
     ;
 
     //bevy_mod_debugdump::print_schedule_graph(&mut app, Update);
@@ -216,7 +195,7 @@ pub fn app() {
     app.run();
 }
 
-fn setup_graphics(mut commands: Commands) {
+pub fn setup_graphics(mut commands: Commands) {
     // Add a camera so we can see the debug-render.
     commands.spawn(Camera2dBundle::default());
 }
@@ -224,6 +203,7 @@ fn setup_graphics(mut commands: Commands) {
 /// Send `Freeze` event if active tetroid hits ground or other tetroid.
 fn tetroid_hit_compound(
     mut freezes: EventWriter<Freeze>,
+    mut active_tetromino_hit: EventWriter<ActiveTetrominoHit>,
     children: Query<&Children>,
     active_tetroid: Query<Entity, With<ActiveTetroid>>,
     ground: Query<Entity, With<Ground>>,
@@ -252,6 +232,8 @@ fn tetroid_hit_compound(
             })
         });
         if any_hits {
+            info!("ActiveTetrominoHit");
+            active_tetromino_hit.send(ActiveTetrominoHit);
             info!("Freeze");
             freezes.send(Freeze);
         }
@@ -1566,25 +1548,6 @@ fn row_intersections(
         // populate partitions from `HitMap`
         //partitions.0.clear();
         //hitmap.0.clear();
-    }
-}
-
-#[derive(Event)]
-pub struct DebugDups;
-
-fn show_colliders_in_row(
-    trigger: Trigger<DebugDups>,
-    colliders: Query<
-        (Entity, &Collider, &GlobalTransform),
-        With<TetroidCollider>,
-    >,
-) {
-    for row in 0..ROWS {
-        let cols: Vec<Entity> = colliders_in_row(row, colliders.iter())
-            .into_iter()
-            .map(|(e, _)| e)
-            .collect();
-        dbg!(row, cols);
     }
 }
 
