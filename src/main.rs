@@ -47,7 +47,12 @@ struct Pause;
 fn kbd_input(
     kbd_input: Res<ButtonInput<KeyCode>>,
     mut ext_impulses: Query<
-        (&mut ExternalImpulse, &mut ExternalForce, &mut Velocity),
+        (
+            &mut ExternalImpulse,
+            &mut ExternalForce,
+            &mut Velocity,
+            &mut Damping,
+        ),
         With<ActiveTetroid>,
     >,
     mut pause: EventWriter<Pause>,
@@ -57,7 +62,7 @@ fn kbd_input(
         pause.send(Pause);
     }
 
-    let Ok((mut ext_impulse, mut ext_force, mut velocity)) =
+    let Ok((mut ext_impulse, mut ext_force, mut velocity, mut damping)) =
         ext_impulses.get_single_mut()
     else {
         return;
@@ -71,10 +76,9 @@ fn kbd_input(
     let mut torque_impulse = 0.0;
     let torque_imp = 13.0 * IMPULSE_SCALAR;
     if kbd_input.pressed(KeyCode::KeyZ) && velocity.angvel < max_ang_vel {
-        ext_force.torque= torque;
+        ext_force.torque = torque;
         //velocity.angvel = -max_ang_vel;
     }
-
     // FIXME: enable faster max angular velocity but with less momentum (reduce
     // collider mass).
     //
@@ -85,7 +89,9 @@ fn kbd_input(
     //   angular inertia & center of mass. Hopefully a point mass will do this.
 
     // - NOTE: remove all forces on `DeactivateTetroid`
-    else if kbd_input.pressed(KeyCode::KeyX) && velocity.angvel > -max_ang_vel {
+    else if kbd_input.pressed(KeyCode::KeyX)
+        && velocity.angvel > -max_ang_vel
+    {
         ext_force.torque = -torque;
         //velocity.angvel = max_ang_vel;
     } else {
@@ -96,25 +102,32 @@ fn kbd_input(
     let lateral_imp = 3.0 * IMPULSE_SCALAR;
     let vertical_imp = lateral_imp;
 
-
     // cap angular and linear velocities
     // otherwise apply impulses
     if kbd_input.pressed(KeyCode::ArrowLeft) && velocity.linvel.x > -max_vel {
         ext_force.force.x = -force;
-    } else if kbd_input.pressed(KeyCode::ArrowRight) && velocity.linvel.x < max_vel {
+    } else if kbd_input.pressed(KeyCode::ArrowRight)
+        && velocity.linvel.x < max_vel
+    {
         ext_force.force.x = force;
     } else {
         ext_force.force.x = 0.0;
     }
 
+    let max_boost_vel = -300.0;
     if kbd_input.pressed(KeyCode::ArrowDown) {
-        if velocity.linvel.y > -300.0 {
+        if velocity.linvel.y > max_boost_vel {
             ext_force.force.y = -force
         }
     } else {
-        // TODO: apply damping if above speed limit.
-        //if velocity.linvel.y > 
         ext_force.force.y = 0.0;
+        // TODO: apply damping if above speed limit.
+        //if velocity.linvel.y >
+        if velocity.linvel.y < max_boost_vel {
+            damping.linear_damping = 5.0;
+        } else {
+            damping.linear_damping = 0.0;
+        }
         // slow down block until it reaches 250.
     }
 }

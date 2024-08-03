@@ -29,7 +29,10 @@ use crate::arena::{
 };
 use crate::arena::{clear_row_densities, rcheck_row_densities};
 use crate::image_demo::{
-    apply_slice_image, image_handle_to_sprite_bundle, image_to_sprite_bundle, new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow, SliceImage, SpawnSquare, SquareImage, TetrominoAssetMap, TetrominoAssetPlugin
+    apply_slice_image, image_handle_to_sprite_bundle, image_to_sprite_bundle,
+    new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow,
+    SliceImage, SpawnSquare, SquareImage, TetrominoAssetMap,
+    TetrominoAssetPlugin,
 };
 use crate::tetroid::{
     components::*, spawn_tetromino, TetroidCollider, TetroidColliderBundle,
@@ -281,7 +284,14 @@ fn freeze(
 /// TODO: unfreeze with some momentum
 fn handle_unfreeze(
     mut tetroids: Query<
-        (Entity, &mut Velocity, &mut GravityScale, &mut ExternalForce, &mut Sleeping),
+        (
+            Entity,
+            &mut Velocity,
+            &mut GravityScale,
+            &mut ExternalForce,
+            &mut Damping,
+            &mut Sleeping,
+        ),
         With<Tetroid>,
     >,
     mut unfreeze: EventReader<UnFreeze>,
@@ -290,7 +300,15 @@ fn handle_unfreeze(
     if !unfreeze.is_empty() {
         unfreeze.clear();
         //dbg!("in freeze, {}", tetroids.iter().len());
-        for (entity, mut vel, mut gravity, mut external_force, sleeping) in tetroids.iter_mut() {
+        for (
+            entity,
+            mut vel,
+            mut gravity,
+            mut external_force,
+            mut damping,
+            sleeping,
+        ) in tetroids.iter_mut()
+        {
             //sleeping.sleeping = true;
 
             //info!("Freezing all tetroids, id: {:?}, {:?}", entity, sleeping);
@@ -298,7 +316,7 @@ fn handle_unfreeze(
             gravity.0 = 1.0;
             external_force.force = Vec2::ZERO;
             external_force.torque = 0.0;
-
+            damping.linear_damping = 0.0;
         }
     }
 }
@@ -1640,7 +1658,7 @@ fn reset_tetroids(
     mut freeze: EventReader<Freeze>,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
-    mut next_tetroid: EventWriter<SpawnNextTetroid>
+    mut next_tetroid: EventWriter<SpawnNextTetroid>,
 ) {
     freeze.clear();
     // despawn
@@ -1654,7 +1672,7 @@ fn reset_tetroids(
 #[derive(Component)]
 pub(crate) struct DebugShape;
 
-    // TODO: refactor spawning as event
+// TODO: refactor spawning as event
 fn reset_debug_shapes(
     mut cmds: Commands,
     debug_shapes: Query<Entity, With<DebugShape>>,
