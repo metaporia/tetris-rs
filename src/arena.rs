@@ -10,16 +10,15 @@ use bevy_prototype_lyon::{
 };
 use bevy_rapier2d::prelude::*;
 use itertools::Itertools;
-use tetris_rs::ROW_DENSITY_THRESHOLD;
+use tetris_rs::{GameState, ROW_DENSITY_THRESHOLD};
 
 use crate::event_demo::{
-    DeactivateTetromino, Freeze, RowBounds, SliceRow, SliceRows, GROUND_Y, ROWS,
+    ActiveTetrominoHit, DeactivateTetromino, Freeze, RowBounds, SliceRow,
+    SliceRows, GROUND_Y, ROWS,
 };
 use crate::tetroid::BRICK_DIM;
 
 const OUTLINE_THICKNESS: f32 = 1.0;
-
-
 
 #[derive(Component)]
 pub struct Ground;
@@ -151,13 +150,8 @@ pub fn clear_row_densities(
     }
 }
 
-/// A per parent/rigid-body slice event. `id` refers to the parent `Tetromino`;
-/// `rows` contains the rows to slice `id` by.
-#[derive(Event, Debug)]
-pub struct SliceTetromino {
-    id: Entity,
-    rows: Vec<usize>,
-}
+#[derive(Event)]
+pub struct SliceReady;
 
 /// Bundle rows above density threshhold and trigger `SliceRows` event.
 ///
@@ -167,16 +161,18 @@ pub struct SliceTetromino {
 /// See `apply_slices`.
 pub fn check_row_densities(
     mut densities: EventReader<RowDensity>,
-    //mut slices: EventWriter<SliceTetromino>,
-    mut freeze: EventReader<Freeze>,
+    mut freeze: EventWriter<Freeze>,
     mut commands: Commands,
+    //mut slices: EventWriter<SliceReady>,
+    mut active_hits: EventReader<ActiveTetrominoHit>,
+    mut next_state: ResMut<NextState<GameState>>,
 ) {
-    // TODO: sort out Freeze vs Tetroid hit ground event
-    // (remove implicit dependencies between events)
-    if freeze.is_empty() {
+    // Only trigger slice row if there has been an active hit this frame
+    if active_hits.is_empty() {
         return;
     }
-    freeze.clear();
+    active_hits.clear();
+    // TODO: we trigger `Freeze`, we don't get triggered *by* it.
     let rows = densities.read().filter_map(|rd| {
         if rd.density >= ROW_DENSITY_THRESHOLD {
             Some(rd.row)
@@ -188,7 +184,11 @@ pub fn check_row_densities(
     else {
         return;
     };
-    commands.trigger(slice_rows)
+    commands.trigger(slice_rows.clone());
+    //slices.send(SliceReady);
+    // enter freeze state
+    //freeze.send(Freeze);
+    next_state.set(GameState::Frozen);
 }
 
 /// Density indicator column

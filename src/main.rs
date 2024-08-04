@@ -32,7 +32,20 @@ fn main() {
 struct Row(u8);
 
 #[derive(Event, Debug)]
-struct Pause;
+pub struct Pause;
+
+/// Handle pause input in isolation in order to disable keyboard input while
+/// frozen.
+pub fn get_pause_input(
+    kbd_input: Res<ButtonInput<KeyCode>>,
+    mut pause: EventWriter<Pause>,
+) {
+
+    if kbd_input.just_pressed(KeyCode::Escape) {
+        pause.send(Pause);
+    }
+}
+
 
 fn kbd_input(
     kbd_input: Res<ButtonInput<KeyCode>>,
@@ -45,12 +58,8 @@ fn kbd_input(
         ),
         With<ActiveTetromino>,
     >,
-    mut pause: EventWriter<Pause>,
     //active_tetroid_query: Query<Entity, With<ActiveTetroid>>,
 ) {
-    if kbd_input.just_pressed(KeyCode::Escape) {
-        pause.send(Pause);
-    }
 
     let Ok((mut ext_impulse, mut ext_force, mut velocity, mut damping)) =
         ext_impulses.get_single_mut()

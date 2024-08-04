@@ -21,10 +21,11 @@ use bevy_rapier2d::prelude::*;
 use itertools::Itertools;
 use std::cmp::{Ord, Ordering};
 use std::iter::{self, once, zip};
+use std::time::Duration;
 
 use crate::arena::{
     self, render_row_density, spawn_density_indicator_column,
-    ClearRowDensities, Ground, RowDensity, RowDensityIndicatorMap,
+    ClearRowDensities, Ground, RowDensity, RowDensityIndicatorMap, SliceReady,
 };
 use crate::arena::{check_row_densities, clear_row_densities};
 use crate::image_demo::{
@@ -33,14 +34,16 @@ use crate::image_demo::{
     SliceImage, SquareImage, TetrominoAssetMap, TetrominoAssetPlugin,
 };
 use crate::tetroid::{
-    components::*, spawn_tetromino, TetrominoCollider, TetrominoColliderBundle,
-    Tetromino, TetrominoBundle, BRICK_DIM,
+    components::*, spawn_tetromino, Tetromino, TetrominoBundle,
+    TetrominoCollider, TetrominoColliderBundle, BRICK_DIM,
 };
 use crate::{
-    draw_convex_hull, graphics, kbd_input, physics, sort_convex_hull, v2_to_3,
-    v3_to_2, window,
+    draw_convex_hull, get_pause_input, graphics, kbd_input, physics,
+    sort_convex_hull, v2_to_3, v3_to_2, window,
 };
 use crate::{draw_ray, image_demo, Pause};
+
+use tetris_rs::{FreezePlugin, GameState};
 
 #[derive(Event, Debug)]
 pub struct Freeze;
@@ -103,6 +106,7 @@ pub fn app() {
         .add_event::<DespawnTetromino>()
         .add_event::<ClearRowDensities>()
         .add_event::<SliceImage>()
+        .add_event::<SliceReady>()
         .insert_resource(HitMap::default())
         .insert_resource(Partitions::default())
         .insert_resource(RowDensityIndicatorMap::default())
@@ -110,15 +114,19 @@ pub fn app() {
         // Schedule graph
         //.add_plugins(bevy_mod_debugdump::CommandLineArgs)
         // Physics plugins
-        //.add_plugins(WorldInspectorPlugin::new())
         //.add_plugins(RapierDebugRenderPlugin::default())
         // ##############
         // # MY PLUGINS #
         // ##############
         .add_plugins((window::plugin, physics::plugin, graphics::plugin))
+        .add_plugins(FreezePlugin)
+        .add_plugins(WorldInspectorPlugin::new())
         .observe(clear_row_densities)
         .observe(apply_slices)
-        .observe(image_demo::clear_below)
+        //.observe(image_demo::clear_below)
+        .observe(rdeactivate_tetromino)
+        //.observe(dbg_slice_rows)
+        .init_state::<GameState>()
         .add_systems(
             Startup,
             (
@@ -130,34 +138,35 @@ pub fn app() {
         .add_systems(
             Update,
             (
-                kbd_input,
+                kbd_input.run_if(in_state(GameState::Playing)),
+                get_pause_input,
                 toggle_pause,
                 reset_game.run_if(input_just_pressed(KeyCode::KeyR)),
                 reset_tetroids.run_if(input_just_pressed(KeyCode::KeyT)),
                 reset_debug_shapes.run_if(input_just_pressed(KeyCode::KeyC)),
             ),
         )
+        .add_systems(OnEnter(GameState::Frozen), handle_freeze)
+        .add_systems(OnExit(GameState::Frozen), handle_unfreeze)
         .add_systems(
             Update,
             (
                 (
-                    //tetroid_hit,
+                    // TODO consolidate unfreeze and handle_unfreeze
+                    // - we want a timer for `Freeze`
+                    //unfreeze, // unfreeze if frozen from last frame
                     tetroid_hit_compound,
-                    handle_freeze,
+                    handle_active_tetromino_hit,
+                    //handle_freeze,
                     (
                         // these two run every frame, uncoditionally
                         row_intersections,
                         partitions,
-                        // NOTE:: `apply_slices` observer should run first
-                        // I'm pretty sure it's injected as ASAP in the
-                        // schedule without interrupting any systems running
-                        // when the trigger fires.
                         check_row_densities,
                     )
                         .chain(),
-                    deactivate_tetromino,
-                    unfreeze, // TODO consolidate unfreeze and handle_unfreeze
-                    handle_unfreeze,
+                    //deactivate_tetromino,
+                    //handle_unfreeze,
                     block_spawner,
                 )
                     .chain(),
@@ -171,6 +180,8 @@ pub fn app() {
 
     app.run();
 }
+
+// END freeze
 
 pub fn setup_graphics(mut commands: Commands) {
     // Add a camera so we can see the debug-render.
@@ -211,8 +222,8 @@ fn tetroid_hit_compound(
         if any_hits {
             info!("ActiveTetrominoHit");
             active_tetromino_hit.send(ActiveTetrominoHit);
-            info!("Freeze");
-            freezes.send(Freeze);
+            //info!("Freeze");
+            //freezes.send(Freeze);
         }
     }
 }
@@ -233,9 +244,11 @@ fn handle_freeze(
     >,
     mut freeze: EventReader<Freeze>,
 ) {
-    if !freeze.is_empty() {
-        freeze.clear();
+    //if !freeze.is_empty() {
+    //freeze.clear();
+    if true {
         //dbg!("in freeze, {}", tetroids.iter().len());
+        info!("Freezing");
         for (
             entity,
             mut vel,
@@ -272,9 +285,11 @@ fn handle_unfreeze(
     mut unfreeze: EventReader<UnFreeze>,
     mut fallspeed: Res<FallSpeed>,
 ) {
-    if !unfreeze.is_empty() {
-        unfreeze.clear();
+    if true {
+        //}!unfreeze.is_empty() {
+        //unfreeze.clear();
         //dbg!("in freeze, {}", tetroids.iter().len());
+        //info!("Unfreezing");
         for (
             entity,
             mut vel,
@@ -292,6 +307,87 @@ fn handle_unfreeze(
             external_force.force = Vec2::ZERO;
             external_force.torque = 0.0;
             damping.linear_damping = 0.0;
+        }
+    }
+}
+
+// Ok. So event readers can't be accessed from an observer.
+fn dbg_slice_rows(
+    trigger: Trigger<SliceRows>,
+    hits: EventReader<ActiveTetrominoHit>,
+) {
+    if !hits.is_empty() {
+        error!("unique: found both events");
+        dbg!(&trigger.event());
+    }
+}
+
+/// Sends `DeactivateTetromino` and `SpawnNextTetroid` on `ActiveTetrominoHit`
+/// event.
+///
+/// When it receive a hit event, it checks for any slices rows. If there are
+/// any, the system is frozen for slicing.
+fn handle_active_tetromino_hit(
+    mut commands: Commands,
+    mut active_tetromino_hit: EventReader<ActiveTetrominoHit>,
+    mut freeze: EventWriter<Freeze>,
+    //mut slices: EventReader<SliceReady>,
+    mut next_tetromino: EventWriter<SpawnNextTetromino>,
+) {
+    if !active_tetromino_hit.is_empty() {
+        active_tetromino_hit.clear();
+        // triggers `rdeactivate_tetromino` observer
+        commands.trigger(DeactivateTetromino);
+        next_tetromino.send(SpawnNextTetromino);
+        // TODO: check for row slices and freeze
+        // - Since SliceRows is a triggered event, idk that we can read it with
+        //   `EventReader<SliceRows>`
+        //if !slices.is_empty() {
+        //    error!("SliceReady inner");
+        //    slices.clear();
+        //    error!("Received ActiveTetrominoHit & SliceRows: Freezing");
+        //    freeze.send(Freeze);
+        //}
+    }
+}
+
+// Removes `Active*` marker components from tetromino. Removes damping, forces
+// from body and applies (higher) gravity scale for inactive bodies.
+//
+fn rdeactivate_tetromino(
+    trigger: Trigger<DeactivateTetromino>,
+    mut cmds: Commands,
+    mut active_tetroid: Query<
+        (
+            Entity,
+            &mut Velocity,
+            &mut GravityScale,
+            &mut ExternalForce,
+            &mut Damping,
+            &Children,
+        ),
+        With<ActiveTetromino>,
+    >,
+) {
+    if let Ok((
+        at,
+        mut velocity,
+        mut gravity,
+        mut ext_force,
+        mut damping,
+        children,
+    )) = active_tetroid.get_single_mut()
+    {
+        velocity.linvel.y = -120.0;
+        gravity.0 = 2.0;
+        ext_force.force = Vec2::ZERO;
+        ext_force.torque = 0.0;
+        damping.linear_damping = 0.0;
+
+        info!("Deactivating Tetromino: {:?}", &at);
+        cmds.entity(at).remove::<ActiveTetromino>();
+        for &child in children {
+            cmds.entity(child).remove::<ActiveTetrominoCollider>();
         }
     }
 }
@@ -318,15 +414,16 @@ fn deactivate_tetromino(
 }
 
 fn unfreeze(
-    mut deactivate: EventReader<DeactivateTetromino>,
+    //mut deactivate: EventReader<DeactivateTetromino>,
     mut freeze: EventReader<Freeze>,
     mut unfreeze: EventWriter<UnFreeze>,
 ) {
-    if !freeze.is_empty() && !deactivate.is_empty() {
-        unfreeze.send(UnFreeze);
-        info!("Unfreeze");
+    if !freeze.is_empty() {
+        // && !deactivate.is_empty() {
         freeze.clear();
-        deactivate.clear();
+        info!("Unfreeze");
+        unfreeze.send(UnFreeze);
+        //deactivate.clear();
     }
 }
 
@@ -338,8 +435,9 @@ fn block_spawner(
     fallspeed: Res<FallSpeed>,
     asset_map: Res<TetrominoAssetMap>,
 ) {
-    if !freeze.is_empty() || !next_tetroid.is_empty() {
-        freeze.clear();
+    //if !freeze.is_empty() || !next_tetroid.is_empty() {
+    if !next_tetroid.is_empty() {
+        //freeze.clear();
         next_tetroid.clear();
         spawn_tetromino(cmds.reborrow(), images, fallspeed, asset_map);
     }
@@ -463,13 +561,13 @@ fn apply_slices(
         //let bs: Vec<u8> = child_data
         //    .iter()
         //    .flat_map(|(_, (lower, upper), _)| vec![lower.row, upper.row]).collect();
-        dbg!(child_data.len());
+        //dbg!(child_data.len());
         //dbg!(&bs);
         let Some((t_lower, t_upper)) = get_min_max(child_bounds) else {
             break;
         };
 
-        dbg!(t_lower, t_upper);
+        //dbg!(t_lower, t_upper);
         // determine if parent is in row, otherwise short-circuit
         let slice_parent = slice_rows
             .rows
@@ -486,7 +584,7 @@ fn apply_slices(
         //     --this will handle discarding pixels
         //   - push `(sprite_bundle_id, hull)` to hulls
         if slice_parent {
-            dbg!(slice_parent, t);
+            //dbg!(slice_parent, t);
             // untouched child vertices and sliced vertices.
             // each element is (Collider handle, image handle, retained vertices)
             let mut hulls: Vec<(ColliderData, Vec<Vec2>)> = Vec::new();
@@ -548,7 +646,7 @@ fn apply_slices(
                         transform: *transform,
                         global_transform: *global_transform,
                     };
-                    info!("child not in row, pushing as is");
+                    //info!("child not in row, pushing as is");
                     hulls.push((
                         collider_data,
                         vertices, //.into_iter()
@@ -561,9 +659,9 @@ fn apply_slices(
                     // - get child's partitions
 
                     //dbg!(&partitions.0);
-                    dbg!(&child);
+                    //dbg!(&child);
                     if let Some(parts) = partitions.0.get(&child) {
-                        info!("child has applicable slices");
+                        //info!("child has applicable slices");
                         for (row, part) in parts {
                             //dbg!(row, &rows_to_slice);
                             // push part if it doesn't have applicable slices
@@ -600,14 +698,14 @@ fn apply_slices(
                                     collider_data,
                                     part.clone(), //iter() .cloned() .map(|p| { transform_point_to_local( transform, &p,) }) .collect(),
                                 ));
-                                info!("pushing part");
+                                //info!("pushing part");
                             }
                             // partition is sliced, so discard it. Likewise
                             // for its sprite bundle
-                            info!("skipping, {}", row);
+                            //info!("skipping, {}", row);
                         }
                     }
-                    error!("child has applicable slices but partition entry not found");
+                    //error!("child has applicable slices but partition entry not found");
                 }
             }
 
@@ -985,7 +1083,7 @@ fn partitions(
             if let Some(hull_area) = convex_hull_area(&points) {
                 if std::panic::catch_unwind(||
                     Collider::convex_hull(&points)).is_err() {
-                   warn!("parry2d panic: failed to convexrt point cloud to convex hull") ;
+                    error!("parry2d panic: failed to convexrt point cloud to convex hull") ;
                     dbg!(&points);
                 } else if Collider::convex_hull(&points).is_some() {
                     area += hull_area;
@@ -1166,7 +1264,7 @@ fn despawn_tetrominos(
             // before sending `SliceRow` events. Probably that right?
 
             //if let Some(mut parent_cmds) = cmds.get_entity(id) {
-            info!("Despawning Tetromino: id = {:?}", &id);
+            //info!("Despawning Tetromino: id = {:?}", &id);
             cmds.entity(id).despawn_recursive();
             //} else {
             //    warn!(
@@ -1188,7 +1286,7 @@ fn spawn_hull_groups(
     mut slice_images: &mut EventWriter<SliceImage>,
     slice_rows: &SliceRows,
 ) {
-    warn!("Spawning hull groups");
+    //warn!("Spawning hull groups");
     // Note: bounds are in global space to avoid conversion back in
     // `apply_slice_image`
     let groups = group_hulls(convex_hulls).into_values();
@@ -1272,8 +1370,9 @@ fn spawn_hull_groups(
                         //     create collider with old transform.
                         // - we also need to figure out how to send `SliceImage`.
                         //   Could we move it back to `apply_slices`?
-                        dbg!(&x_bounds);
-                        dbg!(&y_bounds);
+
+                        //dbg!(&x_bounds);
+                        //dbg!(&y_bounds);
                         let Some(x_bounds) = x_bounds else {
                             return;
                         };
@@ -1296,7 +1395,7 @@ fn spawn_hull_groups(
                                 ),
                             )
                             .with_children(|collider_children| {
-                                warn!("spawning sprite bundle");
+                                //warn!("spawning sprite bundle");
                                 let mut sprite_bundle =
                                     image_handle_to_sprite_bundle(
                                         collider_data.image_handle,

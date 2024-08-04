@@ -208,11 +208,11 @@ pub fn tetromino_type_to_sprite_bundle(
     mut images: &mut Assets<Image>,
     asset_map: &TetrominoAssetMap,
 ) -> (SquareImage, SpriteBundle) {
-    dbg!(&block_type);
-    dbg!(&asset_map);
+    //dbg!(&block_type);
+    //dbg!(&asset_map);
     let handles = asset_map.get(block_type).unwrap();
     let i_block_handle = handles[0].clone();
-    dbg!(&i_block_handle);
+    //dbg!(&i_block_handle);
     let new_image = images.get(&i_block_handle).unwrap().clone();
     let new_handle = images.add(new_image);
     image_handle_to_sprite_bundle(new_handle)
@@ -250,7 +250,7 @@ impl<'a> Pixels<'a> {
     /// Creates new `Pixels` from `Image`. Panics if `image` does not of
     /// `TextureFormat::Rgba8Uint`.
     pub fn new(image: &'a mut Image) -> Pixels<'a> {
-        dbg!(image.texture_descriptor.format);
+        //dbg!(image.texture_descriptor.format);
         assert!(image.texture_descriptor.format == TextureFormat::Rgba8Unorm);
         Pixels {
             width: image.size().as_vec2().x,
@@ -483,7 +483,7 @@ pub fn apply_slice_image(
         y_bounds,
     } in slices.read()
     {
-        info!("{:?}", s);
+        //info!("{:?}", s);
         let Ok((entity, mut image_handle, global_transform)) =
             sprite.get(*sprite_id)
         else {
@@ -496,7 +496,7 @@ pub fn apply_slice_image(
             break;
         };
 
-        info!("slicing sprite: {:?}", sprite_id);
+        //info!("slicing sprite: {:?}", sprite_id);
         let origin = Vec2::ZERO;
 
         let mut pixels = Pixels::new(image);
