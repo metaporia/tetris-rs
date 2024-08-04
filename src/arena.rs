@@ -150,9 +150,6 @@ pub fn clear_row_densities(
     }
 }
 
-#[derive(Event)]
-pub struct SliceReady;
-
 /// Bundle rows above density threshhold and trigger `SliceRows` event.
 ///
 /// As far as system ordering, this runs after `partitions` so if there is a

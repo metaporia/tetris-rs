@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use crate::arena::{
     self, render_row_density, spawn_density_indicator_column,
-    ClearRowDensities, Ground, RowDensity, RowDensityIndicatorMap, SliceReady,
+    ClearRowDensities, Ground, RowDensity, RowDensityIndicatorMap,
 };
 use crate::arena::{check_row_densities, clear_row_densities};
 use crate::image_demo::{
@@ -94,9 +94,10 @@ impl FallSpeed {
 
 pub fn app() {
     let mut app = App::new();
-    app.add_event::<Freeze>()
-        .add_event::<ActiveTetrominoHit>()
+    app.add_event::<Freeze>() // FIXME: remove `Freeze`
         .add_event::<UnFreeze>()
+        // used events
+        .add_event::<ActiveTetrominoHit>()
         .add_event::<DeactivateTetromino>()
         .add_event::<Pause>()
         .add_event::<RowDensity>()
@@ -106,14 +107,10 @@ pub fn app() {
         .add_event::<DespawnTetromino>()
         .add_event::<ClearRowDensities>()
         .add_event::<SliceImage>()
-        .add_event::<SliceReady>()
         .insert_resource(HitMap::default())
         .insert_resource(Partitions::default())
         .insert_resource(RowDensityIndicatorMap::default())
         .insert_resource(FallSpeed(INITIAL_FALLSPEED))
-        // Schedule graph
-        //.add_plugins(bevy_mod_debugdump::CommandLineArgs)
-        // Physics plugins
         //.add_plugins(RapierDebugRenderPlugin::default())
         // ##############
         // # MY PLUGINS #
@@ -121,7 +118,7 @@ pub fn app() {
         .add_plugins((window::plugin, physics::plugin, graphics::plugin))
         .add_plugins(FreezePlugin)
         .add_plugins(WorldInspectorPlugin::new())
-        .observe(clear_row_densities)
+        .observe(clear_row_densities) // TODO: is this necessary?
         .observe(apply_slices)
         //.observe(image_demo::clear_below)
         .observe(rdeactivate_tetromino)
@@ -152,21 +149,11 @@ pub fn app() {
             Update,
             (
                 (
-                    // TODO consolidate unfreeze and handle_unfreeze
-                    // - we want a timer for `Freeze`
-                    //unfreeze, // unfreeze if frozen from last frame
                     tetroid_hit_compound,
                     handle_active_tetromino_hit,
-                    //handle_freeze,
-                    (
-                        // these two run every frame, uncoditionally
-                        row_intersections,
-                        partitions,
-                        check_row_densities,
-                    )
-                        .chain(),
-                    //deactivate_tetromino,
-                    //handle_unfreeze,
+                    row_intersections,
+                    partitions,
+                    check_row_densities,
                     block_spawner,
                 )
                     .chain(),
@@ -303,7 +290,7 @@ fn handle_unfreeze(
 
             //info!("Freezing all tetroids, id: {:?}, {:?}", entity, sleeping);
             *vel = fallspeed.as_velocity();
-            gravity.0 = 1.0;
+            gravity.0 = 2.0;
             external_force.force = Vec2::ZERO;
             external_force.torque = 0.0;
             damping.linear_damping = 0.0;
@@ -378,7 +365,7 @@ fn rdeactivate_tetromino(
         children,
     )) = active_tetroid.get_single_mut()
     {
-        velocity.linvel.y = -120.0;
+        velocity.linvel.y = INITIAL_FALLSPEED;
         gravity.0 = 2.0;
         ext_force.force = Vec2::ZERO;
         ext_force.torque = 0.0;
