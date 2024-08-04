@@ -6,13 +6,16 @@
 
 use bevy::prelude::*;
 
+#[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AppState {
     LoadingScreen,
+    #[default]
     MainMenu,
     InGame,
 }
 
-#[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(SubStates, Default, Debug, Clone, PartialEq, Eq, Hash)]
+#[source(AppState = AppState::InGame)]
 pub enum GameState {
     #[default]
     Playing,
@@ -69,3 +72,4 @@ impl FreezeTimer {
         }
     }
 }
+

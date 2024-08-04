@@ -7,6 +7,8 @@
 //! `Unfreeze` sends, the physics simulation unpauses, and `SpawnTetroid` is
 //! sent.
 
+use bevy_dev_tools::states::log_transitions;
+
 use bevy::asset::transformer;
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::log::{Level, LogPlugin};
@@ -26,6 +28,7 @@ use std::time::Duration;
 use crate::arena::{
     self, render_row_density, spawn_density_indicator_column,
     ClearRowDensities, Ground, RowDensity, RowDensityIndicatorMap,
+    SpawnArenaSet,
 };
 use crate::arena::{check_row_densities, clear_row_densities};
 use crate::image_demo::{
@@ -38,12 +41,12 @@ use crate::tetroid::{
     TetrominoCollider, TetrominoColliderBundle, BRICK_DIM,
 };
 use crate::{
-    draw_convex_hull, get_pause_input, graphics, kbd_input, physics,
-    sort_convex_hull, v2_to_3, v3_to_2, window,
+    debug_reset, draw_convex_hull, get_pause_input, graphics, kbd_input, menu,
+    physics, sort_convex_hull, v2_to_3, v3_to_2, window,
 };
 use crate::{draw_ray, image_demo, Pause};
 
-use tetris_rs::{FreezePlugin, GameState};
+use tetris_rs::{AppState, FreezePlugin, GameState};
 
 #[derive(Event, Debug)]
 pub struct Freeze;
@@ -116,31 +119,30 @@ pub fn app() {
         // # MY PLUGINS #
         // ##############
         .add_plugins((window::plugin, physics::plugin, graphics::plugin))
-        .add_plugins(FreezePlugin)
+        .add_plugins((FreezePlugin, debug_reset::plugin, menu::plugin))
         .add_plugins(WorldInspectorPlugin::new())
         .observe(clear_row_densities) // TODO: is this necessary?
         .observe(apply_slices)
         //.observe(image_demo::clear_below)
         .observe(rdeactivate_tetromino)
         //.observe(dbg_slice_rows)
-        .init_state::<GameState>()
+        .init_state::<AppState>()
+        .add_sub_state::<GameState>()
+        // TODO: arena plugin
         .add_systems(
-            Startup,
-            (
-                spawn_tetromino,
-                arena::spawn_arena,
-                spawn_density_indicator_column,
-            ),
+            OnEnter(AppState::InGame),
+            //OnEnter(GameState::Playing),
+            //Startup,
+            (arena::spawn_arena, spawn_density_indicator_column)
+                .in_set(SpawnArenaSet),
         )
+        .add_systems(OnEnter(GameState::Playing), spawn_tetromino)
         .add_systems(
             Update,
             (
                 kbd_input.run_if(in_state(GameState::Playing)),
-                get_pause_input,
-                toggle_pause,
-                reset_game.run_if(input_just_pressed(KeyCode::KeyR)),
-                reset_tetroids.run_if(input_just_pressed(KeyCode::KeyT)),
-                reset_debug_shapes.run_if(input_just_pressed(KeyCode::KeyC)),
+                (get_pause_input, toggle_pause)
+                    .run_if(in_state(AppState::InGame)),
             ),
         )
         .add_systems(OnEnter(GameState::Frozen), handle_freeze)
@@ -148,20 +150,24 @@ pub fn app() {
         .add_systems(
             Update,
             (
-                (
-                    tetroid_hit_compound,
-                    handle_active_tetromino_hit,
-                    row_intersections,
-                    partitions,
-                    check_row_densities,
-                    block_spawner,
-                )
-                    .chain(),
+                tetroid_hit_compound,
+                handle_active_tetromino_hit,
+                (row_intersections, partitions, check_row_densities)
+                    .chain()
+                    .run_if(in_state(AppState::InGame)),
+                block_spawner,
+                // .chain(),
                 despawn_tetrominos,
                 render_row_density,
                 apply_slice_image,
-            ),
-        );
+            )
+                .run_if(in_state(AppState::InGame))
+                //.after(SpawnArenaSet)
+                //.after(arena::spawn_arena)
+                //.after(spawn_density_indicator_column),
+        )
+        .add_systems(Update, log_transitions::<GameState>)
+        .add_systems(Update, log_transitions::<AppState>);
 
     //bevy_mod_debugdump::print_schedule_graph(&mut app, Update);
 
@@ -170,7 +176,7 @@ pub fn app() {
 
 // END freeze
 
-pub fn setup_graphics(mut commands: Commands) {
+pub fn spawn_camera(mut commands: Commands) {
     // Add a camera so we can see the debug-render.
     commands.spawn(Camera2dBundle::default());
 }
@@ -1660,77 +1666,17 @@ fn show_duplicates_in_hitmap(hitmap: Res<HitMap>)
 fn toggle_pause(
     mut time: ResMut<Time<Virtual>>,
     mut pause: EventReader<Pause>,
+    mut next_state: ResMut<NextState<GameState>>,
 ) {
     for p in pause.read() {
         if time.is_paused() {
             time.unpause();
+            next_state.set(GameState::Playing);
         } else {
             time.pause();
+            next_state.set(GameState::Paused);
         }
     }
-}
-
-fn reset_game(
-    mut cmds: Commands,
-    tetroids: Query<Entity, With<Tetroid>>,
-    shapes: Query<
-        Entity,
-        (With<Path>, With<Handle<ColorMaterial>>, Without<Collider>),
-    >,
-    mut freeze: EventReader<Freeze>,
-    mut images: ResMut<Assets<Image>>,
-    fallspeed: Res<FallSpeed>,
-    mut next_tetroid: EventWriter<SpawnNextTetromino>,
-) {
-    freeze.clear();
-    // despawn
-    tetroids
-        .iter()
-        .for_each(|t| cmds.entity(t).despawn_recursive());
-    shapes
-        .iter()
-        .for_each(|s| cmds.entity(s).despawn_recursive());
-
-    //spawn_tetromino(cmds, images, fallspeed);
-    next_tetroid.send(SpawnNextTetromino);
-}
-
-fn reset_tetroids(
-    mut cmds: Commands,
-    tetroids: Query<Entity, With<Tetroid>>,
-    mut freeze: EventReader<Freeze>,
-    mut images: ResMut<Assets<Image>>,
-    fallspeed: Res<FallSpeed>,
-    mut next_tetroid: EventWriter<SpawnNextTetromino>,
-) {
-    freeze.clear();
-    // despawn
-    tetroids
-        .iter()
-        .for_each(|t| cmds.entity(t).despawn_recursive());
-    next_tetroid.send(SpawnNextTetromino);
-    //spawn_tetromino(cmds, images, fallspeed);
-}
-
-#[derive(Component)]
-pub(crate) struct DebugShape;
-
-// TODO: refactor spawning as event
-fn reset_debug_shapes(
-    mut cmds: Commands,
-    debug_shapes: Query<Entity, With<DebugShape>>,
-    mut freeze: EventReader<Freeze>,
-    mut images: ResMut<Assets<Image>>,
-    fallspeed: Res<FallSpeed>,
-    mut next_tetroid: EventWriter<SpawnNextTetromino>,
-) {
-    freeze.clear();
-    // despawn
-    debug_shapes
-        .iter()
-        .for_each(|t| cmds.entity(t).despawn_recursive());
-    //spawn_tetromino(cmds, images, fallspeed);
-    next_tetroid.send(SpawnNextTetromino);
 }
 
 /// If no active tetroid, send spawn event.

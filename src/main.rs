@@ -14,7 +14,8 @@ mod setup;
 mod tetroid;
 
 use arena::{spawn_arena, Ground};
-use event_demo::{get_min_max, DebugShape, RowBounds, GROUND_Y};
+use debug_reset::DebugShape;
+use event_demo::{get_min_max, RowBounds, GROUND_Y};
 use tetroid::components::*;
 use tetroid::{spawn_tetromino, BRICK_DIM};
 
@@ -40,12 +41,10 @@ pub fn get_pause_input(
     kbd_input: Res<ButtonInput<KeyCode>>,
     mut pause: EventWriter<Pause>,
 ) {
-
     if kbd_input.just_pressed(KeyCode::Escape) {
         pause.send(Pause);
     }
 }
-
 
 fn kbd_input(
     kbd_input: Res<ButtonInput<KeyCode>>,
@@ -60,7 +59,6 @@ fn kbd_input(
     >,
     //active_tetroid_query: Query<Entity, With<ActiveTetroid>>,
 ) {
-
     let Ok((mut ext_impulse, mut ext_force, mut velocity, mut damping)) =
         ext_impulses.get_single_mut()
     else {
@@ -227,33 +225,30 @@ mod window {
     use crate::tetroid::BRICK_DIM;
     pub(super) fn plugin(app: &mut App) {
         app.add_plugins(
-            DefaultPlugins
-                .build()
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Not Tetris".into(),
-                        name: Some("tetris-rs".into()),
-                        resize_constraints: WindowResizeConstraints {
-                            min_width: BRICK_DIM * 13.0,
-                            min_height: BRICK_DIM * 19.0,
-                            max_width: BRICK_DIM * 15.0,
-                            max_height: BRICK_DIM * 26.0,
-                        },
-                        fit_canvas_to_parent: false,
-                        // FIXME: fix ground alignment
-                        resolution: WindowResolution::new(
-                            BRICK_DIM * 15.0,
-                            BRICK_DIM * 25.0,
-                        )
-                        .with_scale_factor_override(1.0),
-                        ..Default::default()
-                    }),
+            DefaultPlugins.build().set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Not Tetris".into(),
+                    name: Some("tetris-rs".into()),
+                    resize_constraints: WindowResizeConstraints {
+                        min_width: BRICK_DIM * 13.0,
+                        min_height: BRICK_DIM * 19.0,
+                        max_width: BRICK_DIM * 15.0,
+                        max_height: BRICK_DIM * 26.0,
+                    },
+                    fit_canvas_to_parent: false,
+                    // FIXME: fix ground alignment
+                    resolution: WindowResolution::new(
+                        BRICK_DIM * 15.0,
+                        BRICK_DIM * 25.0,
+                    )
+                    .with_scale_factor_override(1.0),
                     ..Default::default()
-                })
-                //.disable::<LogPlugin>()
+                }),
+                ..Default::default()
+            }), //.disable::<LogPlugin>()
                 //.set(LogPlugin {
-                    //filter: "tetris-rs=debug,bevy_ecs=debug".to_string(),
-                 //   ..Default::default()
+                //filter: "tetris-rs=debug,bevy_ecs=debug".to_string(),
+                //   ..Default::default()
                 //}),
         );
     }
@@ -278,13 +273,147 @@ mod graphics {
     use bevy::app::{App, Startup};
     use bevy_prototype_lyon::plugin::ShapePlugin;
 
-    use crate::event_demo::setup_graphics;
+    use crate::event_demo::spawn_camera;
     use crate::image_demo::TetrominoAssetPlugin;
 
     pub(super) fn plugin(app: &mut App) {
         app.add_plugins(TetrominoAssetPlugin)
             .add_plugins(ShapePlugin)
-            .add_systems(Startup, setup_graphics);
+            .add_systems(Startup, spawn_camera);
     }
 }
 
+pub mod debug_reset {
+    use crate::event_demo::{FallSpeed, Freeze, SpawnNextTetromino, Tetroid};
+    use bevy::{input::common_conditions::input_just_pressed, prelude::*};
+    use bevy_prototype_lyon::entity::Path;
+    use bevy_rapier2d::geometry::Collider;
+    use tetris_rs::AppState;
+
+    pub fn plugin(mut app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                reset_game.run_if(input_just_pressed(KeyCode::KeyR)),
+                reset_tetroids.run_if(input_just_pressed(KeyCode::KeyT)),
+                reset_debug_shapes.run_if(input_just_pressed(KeyCode::KeyC)),
+            )
+                .run_if(in_state(AppState::InGame)),
+        );
+    }
+
+    fn reset_game(
+        mut cmds: Commands,
+        tetroids: Query<Entity, With<Tetroid>>,
+        shapes: Query<
+            Entity,
+            (With<Path>, With<Handle<ColorMaterial>>, Without<Collider>),
+        >,
+        mut freeze: EventReader<Freeze>,
+        mut images: ResMut<Assets<Image>>,
+        fallspeed: Res<FallSpeed>,
+        mut next_tetroid: EventWriter<SpawnNextTetromino>,
+    ) {
+        freeze.clear();
+        // despawn
+        tetroids
+            .iter()
+            .for_each(|t| cmds.entity(t).despawn_recursive());
+        shapes
+            .iter()
+            .for_each(|s| cmds.entity(s).despawn_recursive());
+
+        //spawn_tetromino(cmds, images, fallspeed);
+        next_tetroid.send(SpawnNextTetromino);
+    }
+
+    fn reset_tetroids(
+        mut cmds: Commands,
+        tetroids: Query<Entity, With<Tetroid>>,
+        mut freeze: EventReader<Freeze>,
+        mut images: ResMut<Assets<Image>>,
+        fallspeed: Res<FallSpeed>,
+        mut next_tetroid: EventWriter<SpawnNextTetromino>,
+    ) {
+        freeze.clear();
+        // despawn
+        tetroids
+            .iter()
+            .for_each(|t| cmds.entity(t).despawn_recursive());
+        next_tetroid.send(SpawnNextTetromino);
+        //spawn_tetromino(cmds, images, fallspeed);
+    }
+
+    #[derive(Component)]
+    pub(crate) struct DebugShape;
+
+    // TODO: refactor spawning as event
+    fn reset_debug_shapes(
+        mut cmds: Commands,
+        debug_shapes: Query<Entity, With<DebugShape>>,
+        mut freeze: EventReader<Freeze>,
+        mut images: ResMut<Assets<Image>>,
+        fallspeed: Res<FallSpeed>,
+        mut next_tetroid: EventWriter<SpawnNextTetromino>,
+    ) {
+        freeze.clear();
+        // despawn
+        debug_shapes
+            .iter()
+            .for_each(|t| cmds.entity(t).despawn_recursive());
+        //spawn_tetromino(cmds, images, fallspeed);
+        next_tetroid.send(SpawnNextTetromino);
+    }
+}
+
+pub mod menu {
+    use bevy::{
+        input::common_conditions::input_just_pressed, prelude::*,
+        sprite::Anchor,
+    };
+    use tetris_rs::{AppState, GameState};
+
+    use crate::util;
+
+    pub fn plugin(mut app: &mut App) {
+        app.add_systems(
+            Update,
+            play.run_if(in_state(AppState::MainMenu))
+                .run_if(input_just_pressed(KeyCode::Space)),
+        )
+        .add_systems(OnEnter(AppState::MainMenu), greet)
+        .add_systems(OnExit(AppState::MainMenu), util::cleanup::<MenuCleanup>);
+    }
+
+    fn play(
+        mut app_state: ResMut<NextState<AppState>>,
+        mut game_state: ResMut<NextState<GameState>>,
+    ) {
+        app_state.set(AppState::InGame);
+        game_state.set(GameState::Playing);
+    }
+
+    #[derive(Component)]
+    struct MenuCleanup;
+
+    fn greet(mut commands: Commands) {
+        commands.spawn(MenuCleanup).insert(Text2dBundle {
+            transform: Transform::from_xyz(0.0, 0.0, 0.0),
+            text_anchor: Anchor::Center,
+            ..default()
+        });
+    }
+}
+
+pub mod util {
+    use bevy::prelude::*;
+
+    pub fn cleanup<T: Component>(
+        mut commands: Commands,
+        entities: Query<Entity, With<T>>,
+    ) {
+        entities
+            .iter()
+            .for_each(|e| commands.entity(e).despawn_recursive())
+    }
+}

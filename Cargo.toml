@@ -16,6 +16,7 @@ rand = "0.8.5"
 # as of v0.4.13, zune-jpeg breaks bevy_dylib.
 # See [Issue 14177](https://github.com/bevyengine/bevy/issues/14117)
 image = { version = "0.25.2", default-features = false, features = [ "png", "rayon"] }
+bevy_dev_tools = "0.14.1"
 
 [profile.dev]
 opt-level = 1
