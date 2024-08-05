@@ -353,7 +353,7 @@ pub mod util {
     }
 }
 
-pub mod pause {
+pub mod kbd_input {
     use crate::{ActiveTetromino, Pause, IMPULSE_SCALAR};
     use bevy::prelude::*;
     use bevy_rapier2d::dynamics::{

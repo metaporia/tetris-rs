@@ -482,7 +482,6 @@ pub fn apply_slice_image(
         y_bounds,
     } in slices.read()
     {
-        once!(info!("Slicing images"));
         let Ok((entity, mut image_handle, global_transform)) =
             sprite.get(*sprite_id)
         else {
@@ -494,10 +493,10 @@ pub fn apply_slice_image(
         };
 
         let Some(mut image) = images.get_mut(image_handle) else {
-            warn!("");
+            warn!("Failed to get image handle");
             break;
         };
-
+        once!(info!("Slicing images"));
         //info!("slicing sprite: {:?}", sprite_id);
         let origin = Vec2::ZERO;
 

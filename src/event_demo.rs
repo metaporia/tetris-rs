@@ -36,7 +36,7 @@ use crate::image_demo::{
     new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow,
     SliceImage, SquareImage, TetrominoAssetMap, TetrominoAssetPlugin,
 };
-use crate::pause::{get_pause_input, kbd_input, toggle_pause};
+use crate::kbd_input::{self, get_pause_input, kbd_input, toggle_pause};
 use crate::tetroid::{
     components::*, spawn_tetromino, Tetromino, TetrominoBundle,
     TetrominoCollider, TetrominoColliderBundle, BRICK_DIM,
@@ -119,12 +119,15 @@ pub fn app() {
         // ##############
         // # MY PLUGINS #
         // ##############
-        .add_plugins((window::plugin, physics::plugin, graphics::plugin))
         .add_plugins((
-            FreezePlugin,
+            window::plugin, // includes DefaultPlugins
+            physics::plugin,
+            graphics::plugin,
             debug_reset::plugin,
             menu::plugin,
             arena::spawn_arena_plugin,
+            kbd_input::plugin,
+            FreezePlugin,
         ))
         .add_plugins(WorldInspectorPlugin::new())
         // # OBSERVERS
@@ -144,18 +147,19 @@ pub fn app() {
         //)
         .add_systems(
             Update,
-            (
-                kbd_input.run_if(in_state(GameState::Playing)),
-                list_active_tetroid.run_if(in_state(GameState::Playing)),
-                (get_pause_input, toggle_pause)
-                    .run_if(in_state(AppState::InGame)),
-            ),
+            list_active_tetroid.run_if(in_state(GameState::Playing)),
         )
         .add_systems(OnEnter(GameState::Frozen), handle_freeze)
         .add_systems(OnExit(GameState::Frozen), handle_unfreeze)
+        // Bugs:
+        // - occasional spawn explosion
+        // - occasional image slice failure (images just go poof)
         .add_systems(
             Update,
             (
+                // NOTE: apply_slice_image must go first so global transforms
+                // have time to propagate
+                apply_slice_image,
                 tetroid_hit_compound,
                 handle_active_tetromino_hit,
                 (row_intersections, partitions, check_row_densities)
@@ -163,13 +167,15 @@ pub fn app() {
                     // NOTE: this needs to be duplicated ig
                     .run_if(in_state(PausedState::Playing)),
                 // .chain(),
-                apply_slice_image.before(despawn_tetrominos),
                 despawn_tetrominos,
                 render_row_density,
             )
+                .chain()
+                // NOTE: without the chain her it will mis-order the deactivation
+                // once in a while.
                 .run_if(in_state(PausedState::Playing)), //.after(SpawnArenaSet)
-                                                     //.after(arena::spawn_arena)
-                                                     //.after(spawn_density_indicator_column),
+                                                         //.after(arena::spawn_arena)
+                                                         //.after(spawn_density_indicator_column),
         )
         .add_systems(Update, log_transitions::<GameState>)
         .add_systems(Update, log_transitions::<AppState>);
@@ -1312,6 +1318,7 @@ fn despawn_tetrominos(
             //    );
             //};
         });
+    despawn.clear();
 }
 
 /// Check for disconnected shapes.
@@ -1644,7 +1651,7 @@ fn row_intersections(
                 Vec2::new(right_x, GROUND_Y + BRICK_DIM * f32::from(ray));
             let left_dir = Vec2::X;
             let right_dir = Vec2::X * -1.0;
-            let max_toi = 300.0;
+            let max_toi = 500.0;
             let solid = true;
             let filter = QueryFilter::only_dynamic();
             // TODO: duplicate handling?

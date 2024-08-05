@@ -26,6 +26,7 @@
 
             # dev tools
             rust-analyzer
+            just
 
             # debugging: codellb adapter
             vscode-extensions.vadimcn.vscode-lldb.adapter
