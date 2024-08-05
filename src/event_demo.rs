@@ -36,13 +36,14 @@ use crate::image_demo::{
     new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow,
     SliceImage, SquareImage, TetrominoAssetMap, TetrominoAssetPlugin,
 };
+use crate::pause::{get_pause_input, kbd_input, toggle_pause};
 use crate::tetroid::{
     components::*, spawn_tetromino, Tetromino, TetrominoBundle,
     TetrominoCollider, TetrominoColliderBundle, BRICK_DIM,
 };
 use crate::{
-    debug_reset, draw_convex_hull, get_pause_input, graphics, kbd_input, menu,
-    physics, sort_convex_hull, v2_to_3, v3_to_2, window,
+    debug_reset, draw_convex_hull, graphics, menu, physics, sort_convex_hull,
+    v2_to_3, v3_to_2, window,
 };
 use crate::{draw_ray, image_demo, Pause};
 
@@ -114,34 +115,42 @@ pub fn app() {
         .insert_resource(Partitions::default())
         .insert_resource(RowDensityIndicatorMap::default())
         .insert_resource(FallSpeed(INITIAL_FALLSPEED))
-        //.add_plugins(RapierDebugRenderPlugin::default())
+        .add_plugins(RapierDebugRenderPlugin::default())
         // ##############
         // # MY PLUGINS #
         // ##############
         .add_plugins((window::plugin, physics::plugin, graphics::plugin))
         .add_plugins((FreezePlugin, debug_reset::plugin, menu::plugin))
         .add_plugins(WorldInspectorPlugin::new())
+        // # OBSERVERS
         .observe(clear_row_densities) // TODO: is this necessary?
         .observe(apply_slices)
-        //.observe(image_demo::clear_below)
         .observe(rdeactivate_tetromino)
-        //.observe(dbg_slice_rows)
+        .observe(spawn_next_tetromino)
+        // # STATE
         .init_state::<AppState>()
         .add_sub_state::<GameState>()
         // TODO: arena plugin
         .add_systems(
-            OnEnter(AppState::InGame),
+            OnEnter(AppState::InitialGameSetup),
             //OnEnter(GameState::Playing),
             //Startup,
-            (arena::spawn_arena, spawn_density_indicator_column)
-                .in_set(SpawnArenaSet),
+            (
+                (arena::spawn_arena, spawn_density_indicator_column)
+                    .in_set(SpawnArenaSet),
+                start_game,
+                spawn_tetromino,
+            ),
         )
-        .add_systems(OnEnter(GameState::Playing), spawn_tetromino)
+        //.add_systems(
+        //    Startup,
+        //    spawn_tetromino.run_if(in_state(AppState::InGame)),
+        //)
         .add_systems(
             Update,
             (
                 kbd_input.run_if(in_state(GameState::Playing)),
-                (get_pause_input, toggle_pause)
+                (get_pause_input, toggle_pause, list_active_tetroid)
                     .run_if(in_state(AppState::InGame)),
             ),
         )
@@ -155,16 +164,14 @@ pub fn app() {
                 (row_intersections, partitions, check_row_densities)
                     .chain()
                     .run_if(in_state(AppState::InGame)),
-                block_spawner,
                 // .chain(),
+                apply_slice_image.before(despawn_tetrominos),
                 despawn_tetrominos,
                 render_row_density,
-                apply_slice_image,
             )
-                .run_if(in_state(AppState::InGame))
-                //.after(SpawnArenaSet)
-                //.after(arena::spawn_arena)
-                //.after(spawn_density_indicator_column),
+                .run_if(in_state(AppState::InGame)), //.after(SpawnArenaSet)
+                                                     //.after(arena::spawn_arena)
+                                                     //.after(spawn_density_indicator_column),
         )
         .add_systems(Update, log_transitions::<GameState>)
         .add_systems(Update, log_transitions::<AppState>);
@@ -176,6 +183,14 @@ pub fn app() {
 
 // END freeze
 
+fn start_game() {
+    error!("Entering AppState::InGame");
+}
+
+fn inital_setup() {
+    error!("Entering AppState::InitialGameSetup: Spawning tetromino ");
+}
+
 pub fn spawn_camera(mut commands: Commands) {
     // Add a camera so we can see the debug-render.
     commands.spawn(Camera2dBundle::default());
@@ -186,7 +201,7 @@ fn tetroid_hit_compound(
     mut freezes: EventWriter<Freeze>,
     mut active_tetromino_hit: EventWriter<ActiveTetrominoHit>,
     children: Query<&Children>,
-    active_tetroid: Query<Entity, With<ActiveTetromino>>,
+    active_tetroid: Query<(Entity, &Children), With<ActiveTetromino>>,
     ground: Query<Entity, With<Ground>>,
     tetroids: Query<Entity, With<Tetroid>>,
     rc: Res<RapierContext>,
@@ -195,7 +210,9 @@ fn tetroid_hit_compound(
     // FIXME why is this triggering for collisions with the wall
     let ground = ground.single();
     // for each collider of the active tetroid check contactt
-    if let Ok(at) = active_tetroid.get_single() {
+    if let Ok((at, colliders)) = active_tetroid.get_single() {
+        let mut other_one = None;
+        let mut active_child = None;
         let any_hits = children.iter_descendants(at).any(|child| {
             rc.contact_pairs_with(child).any(|contact| {
                 if contact.has_any_active_contact() {
@@ -205,15 +222,31 @@ fn tetroid_hit_compound(
                     } else {
                         contact.collider1()
                     };
+
                     // check if `other` is `ground`
-                    tetroids.contains(other) || other == ground
+                    if tetroids.contains(other) || other == ground {
+                        other_one = Some(other);
+                        active_child = Some(child);
+                        true
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 }
             })
         });
+        // FIXME: this is firing a second time before deactivate tetroid
+        // can run
         if any_hits {
-            info!("ActiveTetrominoHit");
+            info!("ActiveTetromino children: ");
+            children.iter_descendants(at).for_each(|c| {
+                info!("{:?}", c);
+            });
+            info!(
+                "ActiveTetrominoHit: active: {:?}, active_collider: {:?}, hit collider: {:?}",
+                at, active_child, other_one
+            );
             active_tetromino_hit.send(ActiveTetrominoHit);
             //info!("Freeze");
             //freezes.send(Freeze);
@@ -325,13 +358,22 @@ fn handle_active_tetromino_hit(
     mut active_tetromino_hit: EventReader<ActiveTetrominoHit>,
     mut freeze: EventWriter<Freeze>,
     //mut slices: EventReader<SliceReady>,
-    mut next_tetromino: EventWriter<SpawnNextTetromino>,
+    //mut next_tetromino: EventWriter<SpawnNextTetromino>,
+    active_tetrominos: Query<Entity, With<ActiveTetromino>>,
 ) {
     if !active_tetromino_hit.is_empty() {
         active_tetromino_hit.clear();
         // triggers `rdeactivate_tetromino` observer
+        info!("Attempting to deactivate tetromino");
         commands.trigger(DeactivateTetromino);
-        next_tetromino.send(SpawnNextTetromino);
+        // NOTE: deactivate tetromino will trigger `SpawnNextTetromino` so
+        // order is preserved.
+        //
+        // only spawn a new one if there is a single ActiveTetromino
+        //
+        //if active_tetrominos.iter().len() < 2 {
+        //    next_tetromino.send(SpawnNextTetromino);
+        //}
         // TODO: check for row slices and freeze
         // - Since SliceRows is a triggered event, idk that we can read it with
         //   `EventReader<SliceRows>`
@@ -382,6 +424,11 @@ fn rdeactivate_tetromino(
         for &child in children {
             cmds.entity(child).remove::<ActiveTetrominoCollider>();
         }
+
+        info!("SpawnNextTetromino");
+        cmds.trigger(SpawnNextTetromino);
+    } else {
+        error!("Expected exactly one ActiveTetromino but found either zero or more than one");
     }
 }
 
@@ -420,20 +467,20 @@ fn unfreeze(
     }
 }
 
-fn block_spawner(
+fn spawn_next_tetromino(
+    trigger: Trigger<SpawnNextTetromino>,
     mut cmds: Commands,
-    mut freeze: EventReader<Freeze>,
-    mut next_tetroid: EventReader<SpawnNextTetromino>,
     mut images: ResMut<Assets<Image>>,
     fallspeed: Res<FallSpeed>,
     asset_map: Res<TetrominoAssetMap>,
 ) {
     //if !freeze.is_empty() || !next_tetroid.is_empty() {
-    if !next_tetroid.is_empty() {
-        //freeze.clear();
-        next_tetroid.clear();
-        spawn_tetromino(cmds.reborrow(), images, fallspeed, asset_map);
-    }
+    //if !next_tetroid.is_empty() {
+    //freeze.clear();
+    //   next_tetroid.clear();
+    info!("Spawning next tetromino");
+    spawn_tetromino(cmds.reborrow(), images, fallspeed, asset_map);
+    //}
 }
 
 type Ray = u8;
@@ -537,12 +584,13 @@ fn apply_slices(
     // [x] group_hulls(hulls)
     // [x] send cleanup events
 
-    dbg!("{}", partitions.0.len());
+    //dbg!("{}", partitions.0.len());
 
     let slice_rows = trigger.event();
-    dbg!(&slice_rows);
+    //dbg!(&slice_rows);
 
-    dbg!(tetrominos.iter().len());
+    //dbg!(tetrominos.iter().len());
+    info!("Applying Slices");
     for t in tetrominos.iter() {
         let child_data = get_rows_of(t, &children, &tetroid_colliders);
         //dbg!(&child_data);
@@ -1663,29 +1711,15 @@ fn show_duplicates_in_hitmap(hitmap: Res<HitMap>)
     //dups
 }
 
-fn toggle_pause(
-    mut time: ResMut<Time<Virtual>>,
-    mut pause: EventReader<Pause>,
-    mut next_state: ResMut<NextState<GameState>>,
-) {
-    for p in pause.read() {
-        if time.is_paused() {
-            time.unpause();
-            next_state.set(GameState::Playing);
-        } else {
-            time.pause();
-            next_state.set(GameState::Paused);
-        }
-    }
-}
-
 /// If no active tetroid, send spawn event.
 fn check_for_active_tetroid(
+    mut commands: Commands,
     active_tetroid: Query<Entity, With<ActiveTetromino>>,
     mut next_tetroid: EventWriter<SpawnNextTetromino>,
 ) {
     if active_tetroid.iter().next().is_none() {
-        next_tetroid.send(SpawnNextTetromino);
+        commands.trigger(SpawnNextTetromino);
+        //next_tetroid.send(SpawnNextTetromino);
         info!("SpawnNextTetroid")
     }
 }
@@ -1694,6 +1728,7 @@ fn check_for_active_tetroid(
 fn list_active_tetroid(active_tetroid: Query<Entity, With<ActiveTetromino>>) {
     let len = active_tetroid.iter().len();
     if len > 1 {
+        dbg!(len);
         warn!("Too many active tetroids: expected 1 but found {}", len);
     }
 }

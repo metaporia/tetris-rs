@@ -483,11 +483,11 @@ pub fn apply_slice_image(
         y_bounds,
     } in slices.read()
     {
-        //info!("{:?}", s);
+        once!(info!("Slicing images"));
         let Ok((entity, mut image_handle, global_transform)) =
             sprite.get(*sprite_id)
         else {
-            warn!("apply_slice_image: sprite_id, {:?}, not found", &sprite_id);
+            error!("apply_slice_image: sprite_id, {:?}, not found", &sprite_id);
             break;
         };
 

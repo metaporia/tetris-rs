@@ -35,100 +35,6 @@ struct Row(u8);
 #[derive(Event, Debug)]
 pub struct Pause;
 
-/// Handle pause input in isolation in order to disable keyboard input while
-/// frozen.
-pub fn get_pause_input(
-    kbd_input: Res<ButtonInput<KeyCode>>,
-    mut pause: EventWriter<Pause>,
-) {
-    if kbd_input.just_pressed(KeyCode::Escape) {
-        pause.send(Pause);
-    }
-}
-
-fn kbd_input(
-    kbd_input: Res<ButtonInput<KeyCode>>,
-    mut ext_impulses: Query<
-        (
-            &mut ExternalImpulse,
-            &mut ExternalForce,
-            &mut Velocity,
-            &mut Damping,
-        ),
-        With<ActiveTetromino>,
-    >,
-    //active_tetroid_query: Query<Entity, With<ActiveTetroid>>,
-) {
-    let Ok((mut ext_impulse, mut ext_force, mut velocity, mut damping)) =
-        ext_impulses.get_single_mut()
-    else {
-        return;
-    };
-
-    let force = 2000000.0;
-    let torque = force * 15.0;
-    let max_vel = 230.0;
-    let max_ang_vel = 2.7;
-
-    let mut torque_impulse = 0.0;
-    let torque_imp = 13.0 * IMPULSE_SCALAR;
-    if kbd_input.pressed(KeyCode::KeyZ) && velocity.angvel < max_ang_vel {
-        ext_force.torque = torque;
-        //velocity.angvel = -max_ang_vel;
-    }
-    // FIXME: enable faster max angular velocity but with less momentum (reduce
-    // collider mass).
-    //
-    //
-    // - put `ColliderMassProperties` on rigibbody
-    // - remove `ColliderMassProperties` from colliders
-    // - ideally we'd like them all to rotate identicially, so identical
-    //   angular inertia & center of mass. Hopefully a point mass will do this.
-
-    // - NOTE: remove all forces on `DeactivateTetroid`
-    else if kbd_input.pressed(KeyCode::KeyX)
-        && velocity.angvel > -max_ang_vel
-    {
-        ext_force.torque = -torque;
-        //velocity.angvel = max_ang_vel;
-    } else {
-        ext_force.torque = 0.0;
-    }
-
-    let mut impulse = Vec2::new(0.0, 0.0);
-    let lateral_imp = 3.0 * IMPULSE_SCALAR;
-    let vertical_imp = lateral_imp;
-
-    // cap angular and linear velocities
-    // otherwise apply impulses
-    if kbd_input.pressed(KeyCode::ArrowLeft) && velocity.linvel.x > -max_vel {
-        ext_force.force.x = -force;
-    } else if kbd_input.pressed(KeyCode::ArrowRight)
-        && velocity.linvel.x < max_vel
-    {
-        ext_force.force.x = force;
-    } else {
-        ext_force.force.x = 0.0;
-    }
-
-    let max_boost_vel = -300.0;
-    if kbd_input.pressed(KeyCode::ArrowDown) {
-        if velocity.linvel.y > max_boost_vel {
-            ext_force.force.y = -force
-        }
-    } else {
-        ext_force.force.y = 0.0;
-        // TODO: apply damping if above speed limit.
-        //if velocity.linvel.y >
-        if velocity.linvel.y < max_boost_vel {
-            damping.linear_damping = 5.0;
-        } else {
-            damping.linear_damping = 0.0;
-        }
-        // slow down block until it reaches 250.
-    }
-}
-
 // sort by lowest y, if y's are equal lowest x
 fn cmp_vec2_by_y(x: &Vec2, y: &Vec2) -> Ordering {
     if x.y < y.y {
@@ -324,7 +230,8 @@ pub mod debug_reset {
             .for_each(|s| cmds.entity(s).despawn_recursive());
 
         //spawn_tetromino(cmds, images, fallspeed);
-        next_tetroid.send(SpawnNextTetromino);
+        cmds.trigger(SpawnNextTetromino);
+        //next_tetroid.send(SpawnNextTetromino);
     }
 
     fn reset_tetroids(
@@ -340,7 +247,8 @@ pub mod debug_reset {
         tetroids
             .iter()
             .for_each(|t| cmds.entity(t).despawn_recursive());
-        next_tetroid.send(SpawnNextTetromino);
+        //next_tetroid.send(SpawnNextTetromino);
+        cmds.trigger(SpawnNextTetromino);
         //spawn_tetromino(cmds, images, fallspeed);
     }
 
@@ -362,7 +270,8 @@ pub mod debug_reset {
             .iter()
             .for_each(|t| cmds.entity(t).despawn_recursive());
         //spawn_tetromino(cmds, images, fallspeed);
-        next_tetroid.send(SpawnNextTetromino);
+        cmds.trigger(SpawnNextTetromino);
+        //next_tetroid.send(SpawnNextTetromino);
     }
 }
 
@@ -375,22 +284,44 @@ pub mod menu {
 
     use crate::util;
 
+    // Exposes AppState::InitialGameSetup hook for one-time initialization,
+    // e.g., spawning arena, the first tetroid, etc., before starting the game
+    // loop.
     pub fn plugin(mut app: &mut App) {
-        app.add_systems(
-            Update,
-            play.run_if(in_state(AppState::MainMenu))
-                .run_if(input_just_pressed(KeyCode::Space)),
-        )
-        .add_systems(OnEnter(AppState::MainMenu), greet)
-        .add_systems(OnExit(AppState::MainMenu), util::cleanup::<MenuCleanup>);
+        app.add_systems(OnEnter(AppState::MainMenu), greet)
+            // enters AppState::InitialGameSetup when user presses space
+            .add_systems(
+                Update,
+                initial_game_setup
+                    .run_if(in_state(AppState::MainMenu))
+                    .run_if(input_just_pressed(KeyCode::Space)),
+            )
+            .add_systems(
+                OnExit(AppState::MainMenu),
+                util::cleanup::<MenuCleanup>,
+            )
+            // Immediately leaves InitialGameSetup so that systems running in
+            // this state run just once (I think).
+            .add_systems(
+                Update,
+                finish_setup_and_start_game
+                    .run_if(in_state(AppState::InitialGameSetup)),
+            );
     }
 
-    fn play(
+    /// Move from MainMenu ->  InitialGameSetup
+    fn initial_game_setup(
         mut app_state: ResMut<NextState<AppState>>,
-        mut game_state: ResMut<NextState<GameState>>,
+        //mut game_state: ResMut<NextState<GameState>>,
+    ) {
+        info!("InitialGameSetup");
+        app_state.set(AppState::InitialGameSetup);
+    }
+
+    fn finish_setup_and_start_game(
+        mut app_state: ResMut<NextState<AppState>>,
     ) {
         app_state.set(AppState::InGame);
-        game_state.set(GameState::Playing);
     }
 
     #[derive(Component)]
@@ -398,6 +329,10 @@ pub mod menu {
 
     fn greet(mut commands: Commands) {
         commands.spawn(MenuCleanup).insert(Text2dBundle {
+            text: Text::from_section(
+                "Press <space> to continue",
+                TextStyle::default(),
+            ),
             transform: Transform::from_xyz(0.0, 0.0, 0.0),
             text_anchor: Anchor::Center,
             ..default()
@@ -415,5 +350,139 @@ pub mod util {
         entities
             .iter()
             .for_each(|e| commands.entity(e).despawn_recursive())
+    }
+}
+
+pub mod pause {
+    use crate::{ActiveTetromino, Pause, IMPULSE_SCALAR};
+    use bevy::prelude::*;
+    use bevy_rapier2d::dynamics::{
+        Damping, ExternalForce, ExternalImpulse, Velocity,
+    };
+    use tetris_rs::{AppState, GameState};
+
+    pub fn plugin(mut app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                kbd_input.run_if(in_state(GameState::Playing)),
+                (get_pause_input, toggle_pause)
+                    .run_if(in_state(AppState::InGame)),
+            ),
+        );
+    }
+
+    /// Toggle the pouse state and virtual time.
+    pub fn toggle_pause(
+        mut time: ResMut<Time<Virtual>>,
+        mut pause: EventReader<Pause>,
+        mut next_state: ResMut<NextState<GameState>>,
+    ) {
+        for p in pause.read() {
+            if time.is_paused() {
+                time.unpause();
+                next_state.set(GameState::Playing);
+            } else {
+                time.pause();
+                next_state.set(GameState::Paused);
+            }
+        }
+    }
+
+    /// Handle pause input in isolation in order to disable keyboard input while
+    /// frozen.
+    pub fn get_pause_input(
+        kbd_input: Res<ButtonInput<KeyCode>>,
+        mut pause: EventWriter<Pause>,
+    ) {
+        if kbd_input.just_pressed(KeyCode::Escape) {
+            pause.send(Pause);
+        }
+    }
+
+    /// Handle all keyboard input but Esc (which is handled by `get_pause_input`).
+    pub fn kbd_input(
+        kbd_input: Res<ButtonInput<KeyCode>>,
+        mut ext_impulses: Query<
+            (
+                &mut ExternalImpulse,
+                &mut ExternalForce,
+                &mut Velocity,
+                &mut Damping,
+            ),
+            With<ActiveTetromino>,
+        >,
+        //active_tetroid_query: Query<Entity, With<ActiveTetroid>>,
+    ) {
+        let Ok((mut ext_impulse, mut ext_force, mut velocity, mut damping)) =
+            ext_impulses.get_single_mut()
+        else {
+            return;
+        };
+
+        let force = 2000000.0;
+        let torque = force * 15.0;
+        let max_vel = 230.0;
+        let max_ang_vel = 2.7;
+
+        let mut torque_impulse = 0.0;
+        let torque_imp = 13.0 * IMPULSE_SCALAR;
+        if kbd_input.pressed(KeyCode::KeyZ) && velocity.angvel < max_ang_vel {
+            ext_force.torque = torque;
+            //velocity.angvel = -max_ang_vel;
+        }
+        // FIXME: enable faster max angular velocity but with less momentum (reduce
+        // collider mass).
+        //
+        //
+        // - put `ColliderMassProperties` on rigibbody
+        // - remove `ColliderMassProperties` from colliders
+        // - ideally we'd like them all to rotate identicially, so identical
+        //   angular inertia & center of mass. Hopefully a point mass will do this.
+
+        // - NOTE: remove all forces on `DeactivateTetroid`
+        else if kbd_input.pressed(KeyCode::KeyX)
+            && velocity.angvel > -max_ang_vel
+        {
+            ext_force.torque = -torque;
+            //velocity.angvel = max_ang_vel;
+        } else {
+            ext_force.torque = 0.0;
+        }
+
+        let mut impulse = Vec2::new(0.0, 0.0);
+        let lateral_imp = 3.0 * IMPULSE_SCALAR;
+        let vertical_imp = lateral_imp;
+
+        // cap angular and linear velocities
+        // otherwise apply impulses
+        if kbd_input.pressed(KeyCode::ArrowLeft)
+            && velocity.linvel.x > -max_vel
+        {
+            ext_force.force.x = -force;
+        } else if kbd_input.pressed(KeyCode::ArrowRight)
+            && velocity.linvel.x < max_vel
+        {
+            ext_force.force.x = force;
+        } else {
+            ext_force.force.x = 0.0;
+        }
+
+        let max_boost_vel = -300.0;
+        if kbd_input.pressed(KeyCode::ArrowDown) {
+            if velocity.linvel.y > max_boost_vel {
+                ext_force.force.y = -force
+            }
+        } else {
+            ext_force.force.y = 0.0;
+            // TODO: apply damping if above speed limit.
+            //if velocity.linvel.y >
+            if velocity.linvel.y < max_boost_vel {
+                damping.linear_damping = 5.0;
+            } else {
+                damping.linear_damping = 0.0;
+            }
+            // slow down block until it reaches 250.
+        }
     }
 }

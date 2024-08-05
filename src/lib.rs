@@ -8,9 +8,12 @@ use bevy::prelude::*;
 
 #[derive(States, Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AppState {
-    LoadingScreen,
+    LoadingMenu,
     #[default]
     MainMenu,
+    /// Spawn arena, load assets, happen here
+    /// Also spawn first tetromino and start the game simultaneously.
+    InitialGameSetup,
     InGame,
 }
 
