@@ -180,14 +180,14 @@ pub fn load_block_assets(
         let file_name =
             format!("assets/scaled/{:?}-square.png", block_type.as_idx());
         dbg!(&file_name);
-        let scaled = image::open(file_name).unwrap();
         // TODO: add scaling here
-        //
-        //.resize_exact(
-        //    BRICK_DIM as u32 * 4,
-        //    BRICK_DIM as u32,
-        //    FilterType::Nearest,
-        //);
+        let scaled = image::open(file_name).unwrap()
+            .resize_exact(
+            BRICK_DIM as u32 ,
+            BRICK_DIM as u32,
+            FilterType::Nearest,
+        );
+
         //let mut output = File::create("scaled.png").unwrap();
         //scaled.write_to(&mut output, image::ImageFormat::Png);
         dbg!(scaled.height(), scaled.width());
@@ -219,7 +219,6 @@ pub fn tetromino_type_to_sprite_bundle(
 }
 
 // PLUGIN END
-
 
 #[derive(Component, Default, Debug)]
 pub struct SquareImage;
@@ -487,7 +486,10 @@ pub fn apply_slice_image(
         let Ok((entity, mut image_handle, global_transform)) =
             sprite.get(*sprite_id)
         else {
-            error!("apply_slice_image: sprite_id, {:?}, not found", &sprite_id);
+            error!(
+                "apply_slice_image: sprite_id, {:?}, not found",
+                &sprite_id
+            );
             break;
         };
 

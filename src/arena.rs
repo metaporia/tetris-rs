@@ -10,7 +10,7 @@ use bevy_prototype_lyon::{
 };
 use bevy_rapier2d::prelude::*;
 use itertools::Itertools;
-use tetris_rs::{GameState, ROW_DENSITY_THRESHOLD};
+use tetris_rs::{AppState, GameState, ROW_DENSITY_THRESHOLD};
 
 use crate::event_demo::{
     ActiveTetrominoHit, DeactivateTetromino, Freeze, RowBounds, SliceRow,
@@ -374,3 +374,11 @@ impl WallPhysicsBundle {
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SpawnArenaSet;
+
+pub fn spawn_arena_plugin(app: &mut App) {
+    app.add_systems(
+        OnEnter(AppState::InitialGameSetup),
+        (spawn_arena, spawn_density_indicator_column)
+            .in_set(SpawnArenaSet)
+    );
+}

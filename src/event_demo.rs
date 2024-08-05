@@ -47,7 +47,7 @@ use crate::{
 };
 use crate::{draw_ray, image_demo, Pause};
 
-use tetris_rs::{AppState, FreezePlugin, GameState};
+use tetris_rs::{AppState, FreezePlugin, GameState, PausedState};
 
 #[derive(Event, Debug)]
 pub struct Freeze;
@@ -120,7 +120,12 @@ pub fn app() {
         // # MY PLUGINS #
         // ##############
         .add_plugins((window::plugin, physics::plugin, graphics::plugin))
-        .add_plugins((FreezePlugin, debug_reset::plugin, menu::plugin))
+        .add_plugins((
+            FreezePlugin,
+            debug_reset::plugin,
+            menu::plugin,
+            arena::spawn_arena_plugin,
+        ))
         .add_plugins(WorldInspectorPlugin::new())
         // # OBSERVERS
         .observe(clear_row_densities) // TODO: is this necessary?
@@ -129,19 +134,10 @@ pub fn app() {
         .observe(spawn_next_tetromino)
         // # STATE
         .init_state::<AppState>()
+        .add_sub_state::<PausedState>()
         .add_sub_state::<GameState>()
-        // TODO: arena plugin
-        .add_systems(
-            OnEnter(AppState::InitialGameSetup),
-            //OnEnter(GameState::Playing),
-            //Startup,
-            (
-                (arena::spawn_arena, spawn_density_indicator_column)
-                    .in_set(SpawnArenaSet),
-                start_game,
-                spawn_tetromino,
-            ),
-        )
+        // spawn first tetromino in gamesetup
+        .add_systems(OnEnter(AppState::InGame), spawn_tetromino)
         //.add_systems(
         //    Startup,
         //    spawn_tetromino.run_if(in_state(AppState::InGame)),
@@ -150,7 +146,8 @@ pub fn app() {
             Update,
             (
                 kbd_input.run_if(in_state(GameState::Playing)),
-                (get_pause_input, toggle_pause, list_active_tetroid)
+                list_active_tetroid.run_if(in_state(GameState::Playing)),
+                (get_pause_input, toggle_pause)
                     .run_if(in_state(AppState::InGame)),
             ),
         )
@@ -163,13 +160,14 @@ pub fn app() {
                 handle_active_tetromino_hit,
                 (row_intersections, partitions, check_row_densities)
                     .chain()
-                    .run_if(in_state(AppState::InGame)),
+                    // NOTE: this needs to be duplicated ig
+                    .run_if(in_state(PausedState::Playing)),
                 // .chain(),
                 apply_slice_image.before(despawn_tetrominos),
                 despawn_tetrominos,
                 render_row_density,
             )
-                .run_if(in_state(AppState::InGame)), //.after(SpawnArenaSet)
+                .run_if(in_state(PausedState::Playing)), //.after(SpawnArenaSet)
                                                      //.after(arena::spawn_arena)
                                                      //.after(spawn_density_indicator_column),
         )
@@ -971,7 +969,7 @@ impl RowBounds {
     pub fn contains_y(&self, y: f32) -> bool {
         let mut lower = self.lower;
         if self.row == 0 {
-            lower -= 30.0;
+            lower -= BRICK_DIM;
         }
         lower <= y && y <= self.upper
     }

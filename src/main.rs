@@ -194,7 +194,7 @@ pub mod debug_reset {
     use bevy::{input::common_conditions::input_just_pressed, prelude::*};
     use bevy_prototype_lyon::entity::Path;
     use bevy_rapier2d::geometry::Collider;
-    use tetris_rs::AppState;
+    use tetris_rs::{AppState, PausedState};
 
     pub fn plugin(mut app: &mut App) {
         app.add_systems(
@@ -204,7 +204,7 @@ pub mod debug_reset {
                 reset_tetroids.run_if(input_just_pressed(KeyCode::KeyT)),
                 reset_debug_shapes.run_if(input_just_pressed(KeyCode::KeyC)),
             )
-                .run_if(in_state(AppState::InGame)),
+                .run_if(in_state(PausedState::Playing)),
         );
     }
 
@@ -359,7 +359,7 @@ pub mod pause {
     use bevy_rapier2d::dynamics::{
         Damping, ExternalForce, ExternalImpulse, Velocity,
     };
-    use tetris_rs::{AppState, GameState};
+    use tetris_rs::{AppState, GameState, PausedState};
 
     pub fn plugin(mut app: &mut App) {
         app.add_systems(
@@ -376,15 +376,15 @@ pub mod pause {
     pub fn toggle_pause(
         mut time: ResMut<Time<Virtual>>,
         mut pause: EventReader<Pause>,
-        mut next_state: ResMut<NextState<GameState>>,
+        mut next_state: ResMut<NextState<PausedState>>,
     ) {
         for p in pause.read() {
             if time.is_paused() {
                 time.unpause();
-                next_state.set(GameState::Playing);
+                next_state.set(PausedState::Playing);
             } else {
                 time.pause();
-                next_state.set(GameState::Paused);
+                next_state.set(PausedState::Paused);
             }
         }
     }

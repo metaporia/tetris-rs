@@ -19,11 +19,18 @@ pub enum AppState {
 
 #[derive(SubStates, Default, Debug, Clone, PartialEq, Eq, Hash)]
 #[source(AppState = AppState::InGame)]
+pub enum PausedState {
+    Paused,
+    #[default]
+    Playing,
+}
+
+#[derive(SubStates, Default, Debug, Clone, PartialEq, Eq, Hash)]
+#[source(PausedState = PausedState::Playing)]
 pub enum GameState {
     #[default]
     Playing,
     Frozen,
-    Paused,
 }
 
 pub const ROW_DENSITY_THRESHOLD: f32 = 0.7;
@@ -75,4 +82,3 @@ impl FreezeTimer {
         }
     }
 }
-
