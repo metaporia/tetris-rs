@@ -362,7 +362,7 @@ pub mod kbd_input {
     use tetris_rs::{AppState, GameState, PausedState};
 
     pub fn plugin(mut app: &mut App) {
-        app.add_systems(
+        app.add_event::<Pause>().add_systems(
             Update,
             (
                 kbd_input.run_if(in_state(GameState::Playing)),
@@ -483,6 +483,173 @@ pub mod kbd_input {
                 damping.linear_damping = 0.0;
             }
             // slow down block until it reaches 250.
+        }
+    }
+}
+
+pub mod slice {
+    //! Handles ray casting (see `row_intersections`), partitioning (see
+    //! `partitions`), and exposes a system set for the row density plugin to
+    //! hook into.
+
+    use bevy::{app::App, ecs::schedule::SystemSet, prelude::*};
+    use tetris_rs::PausedState;
+
+    use crate::{
+        event_demo::{
+            apply_slices, partitions, row_intersections, HitMap, Partitions,
+            SliceRows,
+        },
+        image_demo::{apply_slice_image, SliceImage},
+        row_density::RowDensityCheckSet,
+        tetromino::TetrominoCollisionSet,
+    };
+
+    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct SliceSet;
+
+    /// Registers `row_intersections` and `partitions` in state
+    /// `PausedState::Playing` under system set `SliceSet`.
+    pub fn plugin(mut app: &mut App) {
+        app.add_event::<SliceRows>()
+            .add_event::<SliceImage>()
+            .insert_resource(HitMap::default())
+            .insert_resource(Partitions::default())
+            .add_systems(
+                Update,
+                (apply_slice_image, row_intersections, partitions)
+                    .chain()
+                    .run_if(in_state(PausedState::Playing))
+                    .after(TetrominoCollisionSet)
+                    .before(RowDensityCheckSet)
+                    .in_set(SliceSet),
+            )
+            .observe(apply_slices);
+    }
+}
+
+pub mod tetromino {
+
+    use bevy::{app::App, ecs::schedule::SystemSet, prelude::*};
+    use tetris_rs::{AppState, PausedState};
+
+    use crate::{
+        event_demo::{
+            active_tetromino_collisions, deactivate_tetromino,
+            despawn_tetrominos, handle_active_tetromino_hit,
+            spawn_next_tetromino, ActiveTetrominoHit, DeactivateTetromino,
+            DespawnTetromino, SpawnNextTetromino,
+        },
+        tetroid::spawn_tetromino,
+    };
+
+    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct TetrominoCollisionSet;
+
+    /// Registers tetromino spawn/despawn, deactivation, and collision detection
+    /// systems.
+    pub fn plugin(mut app: &mut App) {
+        app.add_event::<ActiveTetrominoHit>()
+            .add_event::<DeactivateTetromino>()
+            .add_event::<SpawnNextTetromino>()
+            .add_event::<DespawnTetromino>()
+            .add_systems(OnEnter(AppState::InGame), spawn_tetromino)
+            .add_systems(
+                Update,
+                (active_tetromino_collisions, handle_active_tetromino_hit)
+                    .chain()
+                    .in_set(TetrominoCollisionSet)
+                    .run_if(in_state(PausedState::Playing)), //.before(slice::SliceSet),
+            )
+            .add_systems(
+                Update,
+                despawn_tetrominos.after(TetrominoCollisionSet),
+            )
+            .observe(spawn_next_tetromino)
+            .observe(deactivate_tetromino);
+    }
+}
+
+pub mod row_density {
+
+    use bevy::{app::App, ecs::schedule::SystemSet, prelude::*};
+    use tetris_rs::{AppState, PausedState};
+
+    use crate::arena::{
+        check_row_densities, clear_row_densities, render_row_density,
+        ClearRowDensities, RowDensity, RowDensityIndicatorMap,
+    };
+
+    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct RowDensityCheckSet;
+
+    pub fn plugin(mut app: &mut App) {
+        app.add_event::<RowDensity>()
+            .add_event::<ClearRowDensities>()
+            .insert_resource(RowDensityIndicatorMap::default())
+            .add_systems(
+                Update,
+                (check_row_densities, render_row_density)
+                    .in_set(RowDensityCheckSet)
+                    //.after(slice::SliceSet))
+                    .run_if(in_state(PausedState::Playing)),
+            )
+            .observe(clear_row_densities);
+    }
+}
+
+pub mod freeze {
+    use bevy::{
+        app::{App, Plugin},
+        prelude::*,
+        time::{Timer, TimerMode},
+    };
+    use tetris_rs::GameState;
+
+    use crate::event_demo::{freeze, unfreeze};
+
+    /// Expects GameState to already have been initialized.
+    pub fn plugin(app: &mut App) {
+        // TODO: add `blink_row` that gets the current SliceRows
+        // and blinks `em
+        app.insert_resource(FreezeTimer::new())
+            .add_systems(OnEnter(GameState::Frozen), FreezeTimer::init)
+            .add_systems(
+                Update,
+                FreezeTimer::tick.run_if(in_state(GameState::Frozen)),
+            )
+            .add_systems(OnEnter(GameState::Frozen), freeze)
+            .add_systems(OnExit(GameState::Frozen), unfreeze);
+    }
+
+    // START Freeze logic
+    #[derive(Resource)]
+    struct FreezeTimer(Timer);
+
+    impl FreezeTimer {
+        pub fn new() -> Self {
+            FreezeTimer(Timer::from_seconds(0.6, TimerMode::Repeating))
+        }
+
+        // frozen state time
+        // - we could instead put the timer in the state enum so it only exists in the
+        //   `Frozen` state
+        fn init(mut timer: ResMut<FreezeTimer>) {
+            // reset timer
+            timer.0.reset();
+            timer.0.unpause();
+        }
+
+        // tick timer until it finishes and then exit state
+        fn tick(
+            time: Res<Time>,
+            mut timer: ResMut<FreezeTimer>,
+            mut next_state: ResMut<NextState<GameState>>,
+        ) {
+            if timer.0.tick(time.delta()).just_finished() {
+                dbg!(timer.0.remaining());
+                next_state.set(GameState::Playing);
+            }
         }
     }
 }

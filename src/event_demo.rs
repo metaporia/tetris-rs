@@ -42,12 +42,11 @@ use crate::tetroid::{
     TetrominoCollider, TetrominoColliderBundle, BRICK_DIM,
 };
 use crate::{
-    debug_reset, draw_convex_hull, graphics, menu, physics, sort_convex_hull,
-    v2_to_3, v3_to_2, window,
+    debug_reset, draw_convex_hull, freeze, graphics, menu, physics, row_density, slice, sort_convex_hull, tetromino, v2_to_3, v3_to_2, window
 };
 use crate::{draw_ray, image_demo, Pause};
 
-use tetris_rs::{AppState, FreezePlugin, GameState, PausedState};
+use tetris_rs::{AppState, GameState, PausedState};
 
 #[derive(Event, Debug)]
 pub struct Freeze;
@@ -101,18 +100,17 @@ pub fn app() {
     app.add_event::<Freeze>() // FIXME: remove `Freeze`
         .add_event::<UnFreeze>()
         // used events
-        .add_event::<ActiveTetrominoHit>()
-        .add_event::<DeactivateTetromino>()
-        .add_event::<Pause>()
-        .add_event::<RowDensity>()
+        //.add_event::<ActiveTetrominoHit>()
+        //.add_event::<DeactivateTetromino>()
+        //.add_event::<RowDensity>()
         //.add_event::<SliceRow>()
-        .add_event::<SliceRows>()
-        .add_event::<SpawnNextTetromino>()
-        .add_event::<DespawnTetromino>()
-        .add_event::<ClearRowDensities>()
-        .add_event::<SliceImage>()
-        .insert_resource(HitMap::default())
-        .insert_resource(Partitions::default())
+        //.add_event::<SliceRows>()
+        //.add_event::<SpawnNextTetromino>()
+        //.add_event::<DespawnTetromino>()
+        //.add_event::<ClearRowDensities>()
+        //.add_event::<SliceImage>()
+        //.insert_resource(HitMap::default())
+        //.insert_resource(Partitions::default())
         .insert_resource(RowDensityIndicatorMap::default())
         .insert_resource(FallSpeed(INITIAL_FALLSPEED))
         .add_plugins(RapierDebugRenderPlugin::default())
@@ -127,58 +125,43 @@ pub fn app() {
             menu::plugin,
             arena::spawn_arena_plugin,
             kbd_input::plugin,
-            FreezePlugin,
+            freeze::plugin,
+            slice::plugin,
+            tetromino::plugin,
+            row_density::plugin,
         ))
         .add_plugins(WorldInspectorPlugin::new())
-        // # OBSERVERS
-        .observe(clear_row_densities) // TODO: is this necessary?
-        .observe(apply_slices)
-        .observe(rdeactivate_tetromino)
-        .observe(spawn_next_tetromino)
-        // # STATE
         .init_state::<AppState>()
         .add_sub_state::<PausedState>()
         .add_sub_state::<GameState>()
+        .add_systems(Update, log_transitions::<GameState>)
+        .add_systems(Update, log_transitions::<AppState>);
+        //.observe(clear_row_densities) // TODO: is this necessary?
+        //.observe(apply_slices)
+        //.observe(rdeactivate_tetromino)
+        //.observe(spawn_next_tetromino)
+        // # STATE
         // spawn first tetromino in gamesetup
-        .add_systems(OnEnter(AppState::InGame), spawn_tetromino)
+        //.add_systems(OnEnter(AppState::InGame), spawn_tetromino)
         //.add_systems(
         //    Startup,
         //    spawn_tetromino.run_if(in_state(AppState::InGame)),
         //)
-        .add_systems(
-            Update,
-            list_active_tetroid.run_if(in_state(GameState::Playing)),
-        )
-        .add_systems(OnEnter(GameState::Frozen), handle_freeze)
-        .add_systems(OnExit(GameState::Frozen), handle_unfreeze)
+        //.add_systems(OnEnter(GameState::Frozen), handle_freeze)
+        //.add_systems(OnExit(GameState::Frozen), handle_unfreeze)
         // Bugs:
         // - occasional spawn explosion
         // - occasional image slice failure (images just go poof)
-        .add_systems(
-            Update,
-            (
-                // NOTE: apply_slice_image must go first so global transforms
-                // have time to propagate
-                apply_slice_image,
-                tetroid_hit_compound,
-                handle_active_tetromino_hit,
-                (row_intersections, partitions, check_row_densities)
-                    .chain()
-                    // NOTE: this needs to be duplicated ig
-                    .run_if(in_state(PausedState::Playing)),
-                // .chain(),
-                despawn_tetrominos,
-                render_row_density,
-            )
-                .chain()
-                // NOTE: without the chain her it will mis-order the deactivation
-                // once in a while.
-                .run_if(in_state(PausedState::Playing)), //.after(SpawnArenaSet)
-                                                         //.after(arena::spawn_arena)
-                                                         //.after(spawn_density_indicator_column),
-        )
-        .add_systems(Update, log_transitions::<GameState>)
-        .add_systems(Update, log_transitions::<AppState>);
+        //.add_systems(
+            //Update,
+            //(active_tetromino_collisions, handle_active_tetromino_hit)
+            //    .chain()
+            //    .before(slice::SliceSet),
+            //(check_row_densities, despawn_tetrominos, render_row_density)
+            //(check_row_densities, render_row_density)
+            //    .after(slice::SliceSet)
+            //    .run_if(in_state(PausedState::Playing)),
+           //)
 
     //bevy_mod_debugdump::print_schedule_graph(&mut app, Update);
 
@@ -201,7 +184,7 @@ pub fn spawn_camera(mut commands: Commands) {
 }
 
 /// Send `Freeze` event if active tetroid hits ground or other tetroid.
-fn tetroid_hit_compound(
+pub fn active_tetromino_collisions(
     mut freezes: EventWriter<Freeze>,
     mut active_tetromino_hit: EventWriter<ActiveTetrominoHit>,
     children: Query<&Children>,
@@ -260,7 +243,7 @@ fn tetroid_hit_compound(
 
 /// On ground contact remove all velocity & gravity for ActiveTetroid, remove
 /// ActiveTetroid from entity
-fn handle_freeze(
+pub fn freeze(
     mut tetroids: Query<
         (
             Entity,
@@ -300,7 +283,7 @@ fn handle_freeze(
 }
 
 /// TODO: unfreeze with some momentum
-fn handle_unfreeze(
+pub fn unfreeze(
     mut tetroids: Query<
         (
             Entity,
@@ -357,7 +340,7 @@ fn dbg_slice_rows(
 ///
 /// When it receive a hit event, it checks for any slices rows. If there are
 /// any, the system is frozen for slicing.
-fn handle_active_tetromino_hit(
+pub fn handle_active_tetromino_hit(
     mut commands: Commands,
     mut active_tetromino_hit: EventReader<ActiveTetrominoHit>,
     mut freeze: EventWriter<Freeze>,
@@ -393,7 +376,7 @@ fn handle_active_tetromino_hit(
 // Removes `Active*` marker components from tetromino. Removes damping, forces
 // from body and applies (higher) gravity scale for inactive bodies.
 //
-fn rdeactivate_tetromino(
+pub fn deactivate_tetromino(
     trigger: Trigger<DeactivateTetromino>,
     mut cmds: Commands,
     mut active_tetroid: Query<
@@ -436,42 +419,7 @@ fn rdeactivate_tetromino(
     }
 }
 
-// Check if active tetroid needs to be deactivated (has ActiveTetroidHit fired)
-fn deactivate_tetromino(
-    mut cmds: Commands,
-    mut active_tetroid: Query<(Entity, &Children), With<ActiveTetromino>>,
-    mut deactivate: EventWriter<DeactivateTetromino>,
-    mut freeze: EventReader<Freeze>,
-) {
-    if !freeze.is_empty() {
-        if let Ok((at, children)) = active_tetroid.get_single_mut() {
-            cmds.entity(at).remove::<ActiveTetromino>();
-            for &child in children {
-                cmds.entity(child).remove::<ActiveTetrominoCollider>();
-            }
-
-            info!("DeactivateTetroid({:?})", at);
-            deactivate.send(DeactivateTetromino);
-        }
-        freeze.clear();
-    }
-}
-
-fn unfreeze(
-    //mut deactivate: EventReader<DeactivateTetromino>,
-    mut freeze: EventReader<Freeze>,
-    mut unfreeze: EventWriter<UnFreeze>,
-) {
-    if !freeze.is_empty() {
-        // && !deactivate.is_empty() {
-        freeze.clear();
-        info!("Unfreeze");
-        unfreeze.send(UnFreeze);
-        //deactivate.clear();
-    }
-}
-
-fn spawn_next_tetromino(
+pub fn spawn_next_tetromino(
     trigger: Trigger<SpawnNextTetromino>,
     mut cmds: Commands,
     mut images: ResMut<Assets<Image>>,
@@ -492,7 +440,7 @@ type Ray = u8;
 /// An ephemeral `Resource` mapping `(Entity, Ray)` tuples to a the list of ray
 /// intersections with that entity, for Ray in 1..ROWS.
 #[derive(Resource, Debug, Default)]
-struct HitMap(HashMap<(Entity, Ray), Vec<Vec2>>);
+pub struct HitMap(HashMap<(Entity, Ray), Vec<Vec2>>);
 
 impl HitMap {
     /// A collider is "in" a `Row`, r, if it has entries
@@ -562,7 +510,7 @@ struct ColliderData {
 ///
 /// This is an observer so it should run immediately after the calling system's
 /// command queue is flushed (so when` partitions` finishes).
-fn apply_slices(
+pub fn apply_slices(
     trigger: Trigger<SliceRows>,
     mut cmds: Commands,
     mut despawn: EventWriter<DespawnTetromino>,
@@ -1039,9 +987,9 @@ pub fn is_y_in_row(row: Row) -> impl FnMut(&f32) -> bool {
 ///   with their respective group of convex hulls.
 ///
 #[derive(Resource, Debug, Default)]
-struct Partitions(HashMap<Entity, Vec<(Row, ConvexHull)>>);
+pub struct Partitions(HashMap<Entity, Vec<(Row, ConvexHull)>>);
 
-fn partitions(
+pub fn partitions(
     mut partitions: ResMut<Partitions>,
     hitmap: ResMut<HitMap>,
     mut cmds: Commands,
@@ -1294,7 +1242,7 @@ fn partitions(
     //    }
 }
 
-fn despawn_tetrominos(
+pub fn despawn_tetrominos(
     mut despawn: EventReader<DespawnTetromino>,
     mut cmds: Commands,
 ) {
@@ -1624,7 +1572,7 @@ fn convex_hull_area(convex_hull: &ConvexHull) -> Option<f32> {
 //              └───────────────┘
 //             v5                v4
 //
-fn row_intersections(
+pub fn row_intersections(
     mut hitmap: ResMut<HitMap>,
     rc: Res<RapierContext>,
     tetroids: Query<Entity, (With<TetrominoCollider>, With<Collider>)>,
@@ -1633,6 +1581,7 @@ fn row_intersections(
 ) {
     {
         hitmap.0.clear();
+        once!(info!("Casting rays"));
         //if freeze.is_empty() {
         //    return;
         //}
