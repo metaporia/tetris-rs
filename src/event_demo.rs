@@ -42,7 +42,8 @@ use crate::tetroid::{
     TetrominoCollider, TetrominoColliderBundle, BRICK_DIM,
 };
 use crate::{
-    debug_reset, draw_convex_hull, freeze, graphics, menu, physics, row_density, slice, sort_convex_hull, tetromino, v2_to_3, v3_to_2, window
+    debug_reset, draw_convex_hull, freeze, graphics, menu, physics,
+    row_density, slice, sort_convex_hull, tetromino, v2_to_3, v3_to_2, window,
 };
 use crate::{draw_ray, image_demo, Pause};
 
@@ -136,32 +137,32 @@ pub fn app() {
         .add_sub_state::<GameState>()
         .add_systems(Update, log_transitions::<GameState>)
         .add_systems(Update, log_transitions::<AppState>);
-        //.observe(clear_row_densities) // TODO: is this necessary?
-        //.observe(apply_slices)
-        //.observe(rdeactivate_tetromino)
-        //.observe(spawn_next_tetromino)
-        // # STATE
-        // spawn first tetromino in gamesetup
-        //.add_systems(OnEnter(AppState::InGame), spawn_tetromino)
-        //.add_systems(
-        //    Startup,
-        //    spawn_tetromino.run_if(in_state(AppState::InGame)),
-        //)
-        //.add_systems(OnEnter(GameState::Frozen), handle_freeze)
-        //.add_systems(OnExit(GameState::Frozen), handle_unfreeze)
-        // Bugs:
-        // - occasional spawn explosion
-        // - occasional image slice failure (images just go poof)
-        //.add_systems(
-            //Update,
-            //(active_tetromino_collisions, handle_active_tetromino_hit)
-            //    .chain()
-            //    .before(slice::SliceSet),
-            //(check_row_densities, despawn_tetrominos, render_row_density)
-            //(check_row_densities, render_row_density)
-            //    .after(slice::SliceSet)
-            //    .run_if(in_state(PausedState::Playing)),
-           //)
+    //.observe(clear_row_densities) // TODO: is this necessary?
+    //.observe(apply_slices)
+    //.observe(rdeactivate_tetromino)
+    //.observe(spawn_next_tetromino)
+    // # STATE
+    // spawn first tetromino in gamesetup
+    //.add_systems(OnEnter(AppState::InGame), spawn_tetromino)
+    //.add_systems(
+    //    Startup,
+    //    spawn_tetromino.run_if(in_state(AppState::InGame)),
+    //)
+    //.add_systems(OnEnter(GameState::Frozen), handle_freeze)
+    //.add_systems(OnExit(GameState::Frozen), handle_unfreeze)
+    // Bugs:
+    // - occasional spawn explosion
+    // - occasional image slice failure (images just go poof)
+    //.add_systems(
+    //Update,
+    //(active_tetromino_collisions, handle_active_tetromino_hit)
+    //    .chain()
+    //    .before(slice::SliceSet),
+    //(check_row_densities, despawn_tetrominos, render_row_density)
+    //(check_row_densities, render_row_density)
+    //    .after(slice::SliceSet)
+    //    .run_if(in_state(PausedState::Playing)),
+    //)
 
     //bevy_mod_debugdump::print_schedule_graph(&mut app, Update);
 
