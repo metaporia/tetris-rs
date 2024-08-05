@@ -501,12 +501,8 @@ pub mod slice {
             SliceRows,
         },
         image_demo::{apply_slice_image, SliceImage},
-        row_density::RowDensityCheckSet,
-        tetromino::TetrominoCollisionSet,
+        schedule::InGameSet,
     };
-
-    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-    pub struct SliceSet;
 
     /// Registers `row_intersections` and `partitions` in state
     /// `PausedState::Playing` under system set `SliceSet`.
@@ -520,9 +516,7 @@ pub mod slice {
                 (apply_slice_image, row_intersections, partitions)
                     .chain()
                     .run_if(in_state(PausedState::Playing))
-                    .after(TetrominoCollisionSet)
-                    .before(RowDensityCheckSet)
-                    .in_set(SliceSet),
+                    .in_set(InGameSet::Slice),
             )
             .observe(apply_slices);
     }
@@ -540,13 +534,11 @@ pub mod tetromino {
             spawn_next_tetromino, ActiveTetrominoHit, DeactivateTetromino,
             DespawnTetromino, SpawnNextTetromino,
         },
+        schedule::InGameSet,
         tetroid::spawn_tetromino,
     };
 
-    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-    pub struct TetrominoCollisionSet;
-
-    /// Registers tetromino spawn/despawn, deactivation, and collision detection
+    /// Registes tetromino spawn/despawn, deactivation, and collision detection
     /// systems.
     pub fn plugin(mut app: &mut App) {
         app.add_event::<ActiveTetrominoHit>()
@@ -558,12 +550,17 @@ pub mod tetromino {
                 Update,
                 (active_tetromino_collisions, handle_active_tetromino_hit)
                     .chain()
-                    .in_set(TetrominoCollisionSet)
+                    //.in_set(TetrominoCollisionSet)
+                    .in_set(InGameSet::Collision)
                     .run_if(in_state(PausedState::Playing)), //.before(slice::SliceSet),
             )
+            // TODO: Put despawn in PostUpdate, as it's an cleanup implementation detail
             .add_systems(
                 Update,
-                despawn_tetrominos.after(TetrominoCollisionSet),
+                despawn_tetrominos
+                    .run_if(in_state(PausedState::Playing))
+                    .in_set(InGameSet::CleanUp),
+                //.after(TetrominoCollisionSet),
             )
             .observe(spawn_next_tetromino)
             .observe(deactivate_tetromino);
@@ -575,13 +572,13 @@ pub mod row_density {
     use bevy::{app::App, ecs::schedule::SystemSet, prelude::*};
     use tetris_rs::{AppState, PausedState};
 
-    use crate::arena::{
-        check_row_densities, clear_row_densities, render_row_density,
-        ClearRowDensities, RowDensity, RowDensityIndicatorMap,
+    use crate::{
+        arena::{
+            check_row_densities, clear_row_densities, render_row_density,
+            ClearRowDensities, RowDensity, RowDensityIndicatorMap,
+        },
+        schedule::InGameSet,
     };
-
-    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-    pub struct RowDensityCheckSet;
 
     pub fn plugin(mut app: &mut App) {
         app.add_event::<RowDensity>()
@@ -590,7 +587,8 @@ pub mod row_density {
             .add_systems(
                 Update,
                 (check_row_densities, render_row_density)
-                    .in_set(RowDensityCheckSet)
+                    //.in_set(RowDensityCheckSet)
+                    .in_set(InGameSet::CleanUp)
                     //.after(slice::SliceSet))
                     .run_if(in_state(PausedState::Playing)),
             )
@@ -613,12 +611,14 @@ pub mod freeze {
         // TODO: add `blink_row` that gets the current SliceRows
         // and blinks `em
         app.insert_resource(FreezeTimer::new())
-            .add_systems(OnEnter(GameState::Frozen), FreezeTimer::init)
             .add_systems(
                 Update,
                 FreezeTimer::tick.run_if(in_state(GameState::Frozen)),
             )
-            .add_systems(OnEnter(GameState::Frozen), freeze)
+            .add_systems(
+                OnEnter(GameState::Frozen),
+                (FreezeTimer::init, freeze),
+            )
             .add_systems(OnExit(GameState::Frozen), unfreeze);
     }
 
@@ -651,5 +651,24 @@ pub mod freeze {
                 next_state.set(GameState::Playing);
             }
         }
+    }
+}
+
+pub mod schedule {
+    use bevy::{app::App, prelude::*};
+
+    #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+    pub enum InGameSet {
+        Collision,
+        Slice,
+        CleanUp,
+    }
+
+    pub fn plugin(app: &mut App) {
+        app.configure_sets(
+            Update,
+            (InGameSet::Collision, InGameSet::Slice, InGameSet::CleanUp)
+                .chain(),
+        );
     }
 }

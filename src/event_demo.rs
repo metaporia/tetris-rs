@@ -27,8 +27,8 @@ use std::time::Duration;
 
 use crate::arena::{
     self, render_row_density, spawn_density_indicator_column,
-    ClearRowDensities, Ground, RowDensity, RowDensityIndicatorMap,
-    SpawnArenaSet,
+    ClearRowDensities, Ground, RowDensity, RowDensityIndicatorMap
+    
 };
 use crate::arena::{check_row_densities, clear_row_densities};
 use crate::image_demo::{
@@ -42,8 +42,7 @@ use crate::tetroid::{
     TetrominoCollider, TetrominoColliderBundle, BRICK_DIM,
 };
 use crate::{
-    debug_reset, draw_convex_hull, freeze, graphics, menu, physics,
-    row_density, slice, sort_convex_hull, tetromino, v2_to_3, v3_to_2, window,
+    debug_reset, draw_convex_hull, freeze, graphics, menu, physics, row_density, schedule, slice, sort_convex_hull, tetromino, v2_to_3, v3_to_2, window
 };
 use crate::{draw_ray, image_demo, Pause};
 
@@ -130,6 +129,7 @@ pub fn app() {
             slice::plugin,
             tetromino::plugin,
             row_density::plugin,
+            schedule::plugin,
         ))
         .add_plugins(WorldInspectorPlugin::new())
         .init_state::<AppState>()
@@ -336,11 +336,8 @@ fn dbg_slice_rows(
     }
 }
 
-/// Sends `DeactivateTetromino` and `SpawnNextTetroid` on `ActiveTetrominoHit`
-/// event.
+/// Sends `DeactivateTetromino` on `ActiveTetrominoHit` event.
 ///
-/// When it receive a hit event, it checks for any slices rows. If there are
-/// any, the system is frozen for slicing.
 pub fn handle_active_tetromino_hit(
     mut commands: Commands,
     mut active_tetromino_hit: EventReader<ActiveTetrominoHit>,

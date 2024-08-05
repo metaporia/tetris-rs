@@ -372,13 +372,9 @@ impl WallPhysicsBundle {
     }
 }
 
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SpawnArenaSet;
-
 pub fn spawn_arena_plugin(app: &mut App) {
     app.add_systems(
         OnEnter(AppState::InitialGameSetup),
         (spawn_arena, spawn_density_indicator_column)
-            .in_set(SpawnArenaSet)
     );
 }
