@@ -1349,7 +1349,7 @@ fn spawn_hull_groups(
         //});
 
         // Post slice chunks get full gravity.
-        cmds.spawn(TetrominoBundle::new(1.0))
+        cmds.spawn(TetrominoBundle::new().with_gravity_scale(1.0))
             .with_children(|children| {
                 colliders.for_each(
                     |(collider_data, col, x_bounds, y_bounds)| {

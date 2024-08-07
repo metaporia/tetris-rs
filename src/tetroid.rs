@@ -39,14 +39,16 @@ pub(crate) struct TetrominoBundle {
     tetromino_marker: Tetromino,
     inherited_visibility: InheritedVisibility,
     damping: Damping,
+    ccd: Ccd,
 }
 
 impl TetrominoBundle {
-    pub(crate) fn new(gravity_scale: f32) -> Self {
-        let gravity_scale = GravityScale(gravity_scale);
+    pub(crate) fn new() -> Self {
         TetrominoBundle {
-            gravity_scale,
             rigid_body: RigidBody::Dynamic,
+            // NOTE: we could opt to disable ccd on deactivation if performance
+            // becomes an issue
+            ccd: Ccd::enabled(),
             //inherited_visibility: InheritedVisibility::VISIBLE,
             ..Default::default()
         }
@@ -59,6 +61,16 @@ impl TetrominoBundle {
     ) -> Self {
         self.transform_bundle =
             TransformBundle::from_transform(transform.into());
+        self
+    }
+
+    pub(crate) fn with_velocity(mut self, velocity: Velocity) -> Self {
+        self.velocity = velocity;
+        self
+    }
+
+    pub(crate) fn with_gravity_scale(mut self, gravity_scale: f32) -> Self {
+        self.gravity_scale = GravityScale(0.0);
         self
     }
 }
@@ -74,7 +86,6 @@ pub struct TetrominoCollider;
 #[derive(Bundle, Default)]
 pub(crate) struct TetrominoColliderBundle {
     pub tetroid: Tetroid,
-    /// FIXME: test if both child and parent need this
     pub transform_bundle: TransformBundle,
     pub active_events: ActiveEvents,
     pub collider: Collider,
@@ -82,18 +93,22 @@ pub(crate) struct TetrominoColliderBundle {
     pub restitution: Restitution,
     pub tetroid_collider_marker: TetrominoCollider,
     pub inherited_visibility: InheritedVisibility,
+    collider_mass_props: ColliderMassProperties,
 }
 
 impl TetrominoColliderBundle {
     /// Creates `TetroidColliderBundle` from `Collider`.
     ///
     /// It is assumed that `Collider` is a `Collider::convex_hull`.
-    pub(crate) fn new(collider: Collider, friction_coefficient: f32) -> Self {
+    pub(crate) fn new(
+        collider: Collider,
+        transform: Transform,
+        friction_coefficient: f32,
+    ) -> Self {
         TetrominoColliderBundle {
             collider,
             tetroid: Tetroid,
-            transform_bundle: TransformBundle::IDENTITY,
-
+            transform_bundle: TransformBundle::from_transform(transform),
             active_events: ActiveEvents::COLLISION_EVENTS,
             friction: Friction {
                 coefficient: friction_coefficient,
@@ -103,6 +118,7 @@ impl TetrominoColliderBundle {
                 coefficient: 0.0,
                 combine_rule: CoefficientCombineRule::Min,
             },
+            collider_mass_props: ColliderMassProperties::Density(0.1),
             ..Default::default()
         }
     }
@@ -287,16 +303,14 @@ pub fn spawn_tetromino(
     let tetromino = tetromino_type.to_colliders();
 
     // active tetroid gets lower gravity
-    let mut tetromino_bundle = TetrominoBundle {
-        gravity_scale: GravityScale(0.0),
-        velocity: fallspeed.as_velocity(),
-        transform_bundle: TransformBundle::from(Transform::from_xyz(
+    let mut tetromino_bundle = TetrominoBundle::new()
+        .with_gravity_scale(0.0)
+        .with_velocity(fallspeed.as_velocity())
+        .with_transform(Transform::from_xyz(
             -BRICK_DIM,
             GROUND_Y + BRICK_DIM * 21.0,
             0.0,
-        )),
-        ..Default::default()
-    };
+        ));
 
     let id2 = commands
         .spawn(tetromino_bundle)
