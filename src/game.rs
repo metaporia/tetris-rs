@@ -27,24 +27,25 @@ use std::time::Duration;
 
 use crate::arena::{
     self, render_row_density, spawn_density_indicator_column,
-    ClearRowDensities, Ground, RowDensity, RowDensityIndicatorMap
-    
+    Ground, RowDensity, RowDensityIndicatorMap,
 };
-use crate::arena::{check_row_densities, clear_row_densities};
-use crate::image_demo::{
+use crate::arena::check_row_densities;
+use crate::image::{
     apply_slice_image, image_handle_to_sprite_bundle, image_to_sprite_bundle,
     new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow,
     SliceImage, SquareImage, TetrominoAssetMap, TetrominoAssetPlugin,
 };
-use crate::kbd_input::{self, get_pause_input, kbd_input, toggle_pause};
+use crate::kbd::{self, get_pause_input, kbd_input, toggle_pause};
+use crate::arena::ClearRowDensities;
 use crate::tetroid::{
     components::*, spawn_tetromino, Tetromino, TetrominoBundle,
     TetrominoCollider, TetrominoColliderBundle, BRICK_DIM,
 };
 use crate::{
-    debug_reset, draw_convex_hull, freeze, graphics, menu, physics, row_density, schedule, slice, sort_convex_hull, tetromino, v2_to_3, v3_to_2, window
+    debug, draw_convex_hull, freeze, graphics, menu, physics, row_density,
+    schedule, slice, sort_convex_hull, tetromino, v2_to_3, v3_to_2, window,
 };
-use crate::{draw_ray, image_demo, Pause};
+use crate::{draw_ray, image, Pause};
 
 use tetris_rs::{AppState, GameState, PausedState};
 
@@ -71,6 +72,7 @@ pub struct Tetroid;
 #[derive(Event, Debug)]
 pub struct ActiveTetrominoHit;
 
+// FIXME: lower forces and velocity to match better length_unit
 pub const PIXELS_PER_METER: f32 = 50.0;
 pub const GRAVITY: f32 = 0.05;
 pub const VELOCITY: Velocity = Velocity {
@@ -121,10 +123,10 @@ pub fn app() {
             window::plugin, // includes DefaultPlugins
             physics::plugin,
             graphics::plugin,
-            debug_reset::plugin,
+            debug::plugin,
             menu::plugin,
             arena::spawn_arena_plugin,
-            kbd_input::plugin,
+            kbd::plugin,
             freeze::plugin,
             slice::plugin,
             tetromino::plugin,
@@ -224,8 +226,6 @@ pub fn active_tetromino_collisions(
                 }
             })
         });
-        // FIXME: this is firing a second time before deactivate tetroid
-        // can run
         if any_hits {
             info!("ActiveTetromino children: ");
             children.iter_descendants(at).for_each(|c| {
@@ -242,88 +242,9 @@ pub fn active_tetromino_collisions(
     }
 }
 
-/// On ground contact remove all velocity & gravity for ActiveTetroid, remove
-/// ActiveTetroid from entity
-pub fn freeze(
-    mut tetroids: Query<
-        (
-            Entity,
-            &mut Velocity,
-            &mut GravityScale,
-            &mut Sleeping,
-            &mut ExternalForce,
-            &mut Damping,
-        ),
-        With<Tetroid>,
-    >,
-    mut freeze: EventReader<Freeze>,
-) {
-    //if !freeze.is_empty() {
-    //freeze.clear();
-    if true {
-        //dbg!("in freeze, {}", tetroids.iter().len());
-        info!("Freezing");
-        for (
-            entity,
-            mut vel,
-            mut gravity,
-            mut sleeping,
-            mut ext_force,
-            mut damping,
-        ) in tetroids.iter_mut()
-        {
-            sleeping.sleeping = true;
-            damping.linear_damping = 0.0;
-            ext_force.force = Vec2::ZERO;
 
-            //info!("Freezing all tetroids, id: {:?}, {:?}", entity, sleeping);
-            *vel = Velocity::zero();
-            gravity.0 = 0.0;
-        }
-    }
-}
 
-/// TODO: unfreeze with some momentum
-pub fn unfreeze(
-    mut tetroids: Query<
-        (
-            Entity,
-            &mut Velocity,
-            &mut GravityScale,
-            &mut ExternalForce,
-            &mut Damping,
-            &mut Sleeping,
-        ),
-        With<Tetroid>,
-    >,
-    mut unfreeze: EventReader<UnFreeze>,
-    mut fallspeed: Res<FallSpeed>,
-) {
-    if true {
-        //}!unfreeze.is_empty() {
-        //unfreeze.clear();
-        //dbg!("in freeze, {}", tetroids.iter().len());
-        //info!("Unfreezing");
-        for (
-            entity,
-            mut vel,
-            mut gravity,
-            mut external_force,
-            mut damping,
-            sleeping,
-        ) in tetroids.iter_mut()
-        {
-            //sleeping.sleeping = true;
 
-            //info!("Freezing all tetroids, id: {:?}, {:?}", entity, sleeping);
-            *vel = fallspeed.as_velocity();
-            gravity.0 = 2.0;
-            external_force.force = Vec2::ZERO;
-            external_force.torque = 0.0;
-            damping.linear_damping = 0.0;
-        }
-    }
-}
 
 // Ok. So event readers can't be accessed from an observer.
 fn dbg_slice_rows(
@@ -447,7 +368,6 @@ impl HitMap {
     /// NOTE: fuck this doesn't catch colliders fully inside the row but its
     /// fine so long as the despawn pass catches em. For the purposes of
     /// creating the convex hulls and populating the partition map, this is
-    /// FIXME: this ignore
     fn colliders_in_row(&self, row: Row) -> impl Iterator<Item = &Entity> {
         self.0
             .keys()
@@ -497,6 +417,7 @@ fn colliders_in_row<'a>(
         .collect()
 }
 
+#[derive(Debug)]
 struct ColliderData {
     id: Entity,
     image_handle: Handle<Image>,
@@ -660,6 +581,7 @@ pub fn apply_slices(
                                 // FIXME: will doing this inside the for-lop
                                 // over `parts` duplicate it? I'm not 100% sure
                                 // that each hull is unique in `Partitions`
+
                                 //let sprite_bundle = image_to_sprite_bundle(
                                 //    image.clone(),
                                 //    images.as_mut(),
@@ -1201,7 +1123,7 @@ pub fn partitions(
     //            // This shit works.
     //            spawn_hull_groups(cmds.reborrow(), hulls);
     //
-    //            // FIXME: somehow this is running multiple times and causing
+    //            // FIXME somehow this is running multiple times and causing
     //            // panics. I'm pretty sure it panics when multiple rows that each
     //            // cantain the same parent are sliced. The first slice despawns
     //            // the parent, the second somehow manages to get through the
@@ -1348,10 +1270,20 @@ fn spawn_hull_groups(
         //        .collect(),
         //});
 
+        let colliders: Vec<(
+            ColliderData,
+            Collider,
+            Option<(f32, f32)>,
+            Option<(f32, f32)>,
+        )> = colliders.collect();
+        if colliders.is_empty() {
+            dbg!(&colliders);
+        }
+        assert!(!colliders.is_empty());
         // Post slice chunks get full gravity.
         cmds.spawn(TetrominoBundle::new().with_gravity_scale(1.0))
             .with_children(|children| {
-                colliders.for_each(
+                colliders.into_iter().for_each(
                     |(collider_data, col, x_bounds, y_bounds)| {
                         // FIXME:
                         // - we need the old collider's transform, since the hull
@@ -1375,16 +1307,13 @@ fn spawn_hull_groups(
                         // Apply transform to collider points.
                         let id = children
                             .spawn(
-                                TetrominoColliderBundle {
-                                    collider: col,
-                                    ..default()
-                                }
-                                .with_friction(FRICTION)
-                                .with_transform(
-                                    collider_data
-                                        .global_transform
-                                        .compute_transform(),
-                                ),
+                                TetrominoColliderBundle::new(col)
+                                    .with_transform(
+                                        collider_data
+                                            .global_transform
+                                            .compute_transform(),
+                                    )
+                                    .with_friction(FRICTION),
                             )
                             .with_children(|collider_children| {
                                 //warn!("spawning sprite bundle");
@@ -1479,8 +1408,6 @@ fn send_slice(
     mut commands: Commands,
     mut unfreeze: EventWriter<UnFreeze>,
 ) {
-    // FIXME: Yea it's fucking broken. Not even worth debugging the area bug
-    // until we sort out multiple slices
     commands.trigger(SliceRows { rows: vec![0, 1] });
     // slices.send(SliceRow { row: 2 });
     unfreeze.send(UnFreeze);
@@ -1587,7 +1514,6 @@ pub fn row_intersections(
 
         // map of row to colliding entities
         //let row_map: HashMap<Row, Vec<Entity>> = HashMap::new();
-        // FIXME: clear on event to avoid wiping resource within two frames
         let left_x = BRICK_DIM * -5.0;
         let right_x = BRICK_DIM * 5.0;
         // NOTE: excludes very top row

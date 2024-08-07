@@ -9,15 +9,15 @@ use rand::Rng;
 pub mod components;
 
 use crate::{
-    event_demo::{FallSpeed, Tetroid, FRICTION, GROUND_Y, INITIAL_FALLSPEED},
-    image_demo::{
+    game::{FallSpeed, Tetroid, FRICTION, GROUND_Y, INITIAL_FALLSPEED},
+    image::{
         new_blue_square_bundle, tetromino_type_to_sprite_bundle,
         TetrominoAssetMap,
     },
 };
 use components::*;
 
-pub const BRICK_DIM: f32 = 30.0;
+pub const BRICK_DIM: f32 = 38.0;
 
 /// Marker type for tetromino. A `Tetromino` marks a parent `Tetroid` entity
 /// with a `RigidBody` whose children are convex colliders.
@@ -102,17 +102,15 @@ impl TetrominoColliderBundle {
     /// It is assumed that `Collider` is a `Collider::convex_hull`.
     pub(crate) fn new(
         collider: Collider,
-        transform: Transform,
-        friction_coefficient: f32,
     ) -> Self {
         TetrominoColliderBundle {
             collider,
             tetroid: Tetroid,
-            transform_bundle: TransformBundle::from_transform(transform),
+            //transform_bundle: TransformBundle::from_transform(transform),
             active_events: ActiveEvents::COLLISION_EVENTS,
             friction: Friction {
-                coefficient: friction_coefficient,
                 combine_rule: CoefficientCombineRule::Min,
+                ..Default::default()
             },
             restitution: Restitution {
                 coefficient: 0.0,
@@ -317,10 +315,7 @@ pub fn spawn_tetromino(
         .insert(ActiveTetromino)
         .with_children(|children| {
             tetromino.into_iter().for_each(|(Vec2 { x, y }, collider)| {
-                let collider_bundle = TetrominoColliderBundle {
-                    collider,
-                    ..Default::default()
-                }
+                let collider_bundle = TetrominoColliderBundle::new(collider) 
                 .with_friction(FRICTION)
                 .with_starting_position(x, y);
 

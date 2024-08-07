@@ -20,7 +20,7 @@ use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, ImageBuffer, Pixel, RgbaImage};
 use std::ops::Deref;
 
-use crate::event_demo::{transform_point, RowBounds, SliceRows, GROUND_Y};
+use crate::game::{transform_point, RowBounds, SliceRows, GROUND_Y};
 use crate::tetroid::*;
 use crate::BRICK_DIM;
 use crate::{draw_circle_contact, ActiveTetromino};

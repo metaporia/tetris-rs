@@ -12,7 +12,7 @@ use bevy_rapier2d::prelude::*;
 use itertools::Itertools;
 use tetris_rs::{AppState, GameState, ROW_DENSITY_THRESHOLD};
 
-use crate::event_demo::{
+use crate::game::{
     ActiveTetrominoHit, DeactivateTetromino, Freeze, RowBounds, SliceRow,
     SliceRows, GROUND_Y, ROWS,
 };
@@ -291,7 +291,10 @@ pub fn spawn_arena(mut commands: Commands) {
         .insert(ColliderMassProperties::Mass(100.0))
         .insert(Collider::cuboid(ground_extents.x, ground_extents.y))
         .insert(Restitution::coefficient(0.0))
-        .insert(Friction::new(0.0))
+    .insert(Friction {
+                coefficient: 1.0,
+                combine_rule: CoefficientCombineRule::Max,
+            })
         .insert(TransformBundle::from(Transform::from_xyz(
             0.0,
             ground_origin_y,
