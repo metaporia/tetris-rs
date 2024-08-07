@@ -2,12 +2,12 @@
 //!
 //! Nominal components to label tetroid states.
 //!
-//! When a new tetroid is spawned, the `RigidBody` gets `ActiveTetroid`, and 
+//! When a new tetroid is spawned, the `RigidBody` gets `ActiveTetroid`, and
 //! its colliders get `ActiveTetroidCollider`. An active tetroid keeps these
 //! components until it hits the ground or any inactive tetroid/debris
-//! 
-//! Upon becoming inactive, the formerly `ActiveTetroid` or any new `RigidBody`(s) 
-//! created by a row slice, are labelled `InactiveTetroid`--while child colliders 
+//!
+//! Upon becoming inactive, the formerly `ActiveTetroid` or any new `RigidBody`(s)
+//! created by a row slice, are labelled `InactiveTetroid`--while child colliders
 //! get `InactiveTetroidCollider`
 //!
 //!

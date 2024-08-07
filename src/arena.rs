@@ -291,10 +291,10 @@ pub fn spawn_arena(mut commands: Commands) {
         .insert(ColliderMassProperties::Mass(100.0))
         .insert(Collider::cuboid(ground_extents.x, ground_extents.y))
         .insert(Restitution::coefficient(0.0))
-    .insert(Friction {
-                coefficient: 1.0,
-                combine_rule: CoefficientCombineRule::Max,
-            })
+        .insert(Friction {
+            coefficient: 1.0,
+            combine_rule: CoefficientCombineRule::Max,
+        })
         .insert(TransformBundle::from(Transform::from_xyz(
             0.0,
             ground_origin_y,
@@ -378,6 +378,6 @@ impl WallPhysicsBundle {
 pub fn spawn_arena_plugin(app: &mut App) {
     app.add_systems(
         OnEnter(AppState::InitialGameSetup),
-        (spawn_arena, spawn_density_indicator_column)
+        (spawn_arena, spawn_density_indicator_column),
     );
 }

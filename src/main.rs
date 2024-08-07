@@ -9,8 +9,8 @@ use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
 mod arena;
 pub mod debug;
-mod game;
 pub mod freeze;
+mod game;
 pub mod image;
 pub mod kbd;
 pub mod row_density;

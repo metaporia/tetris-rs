@@ -1,4 +1,3 @@
-
 //! Handles ray casting (see `row_intersections`), partitioning (see
 //! `partitions`), and exposes a system set for the row density plugin to
 //! hook into.

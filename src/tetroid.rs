@@ -100,9 +100,7 @@ impl TetrominoColliderBundle {
     /// Creates `TetroidColliderBundle` from `Collider`.
     ///
     /// It is assumed that `Collider` is a `Collider::convex_hull`.
-    pub(crate) fn new(
-        collider: Collider,
-    ) -> Self {
+    pub(crate) fn new(collider: Collider) -> Self {
         TetrominoColliderBundle {
             collider,
             tetroid: Tetroid,
@@ -315,9 +313,9 @@ pub fn spawn_tetromino(
         .insert(ActiveTetromino)
         .with_children(|children| {
             tetromino.into_iter().for_each(|(Vec2 { x, y }, collider)| {
-                let collider_bundle = TetrominoColliderBundle::new(collider) 
-                .with_friction(FRICTION)
-                .with_starting_position(x, y);
+                let collider_bundle = TetrominoColliderBundle::new(collider)
+                    .with_friction(FRICTION)
+                    .with_starting_position(x, y);
 
                 let block_sprite = tetromino_type_to_sprite_bundle(
                     &tetromino_type,

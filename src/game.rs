@@ -25,18 +25,18 @@ use std::cmp::{Ord, Ordering};
 use std::iter::{self, once, zip};
 use std::time::Duration;
 
-use crate::arena::{
-    self, render_row_density, spawn_density_indicator_column,
-    Ground, RowDensity, RowDensityIndicatorMap,
-};
 use crate::arena::check_row_densities;
+use crate::arena::ClearRowDensities;
+use crate::arena::{
+    self, render_row_density, spawn_density_indicator_column, Ground,
+    RowDensity, RowDensityIndicatorMap,
+};
 use crate::image::{
     apply_slice_image, image_handle_to_sprite_bundle, image_to_sprite_bundle,
     new_blue_square_bundle, rgba_image_to_sprite_bundle, ClearBelow,
     SliceImage, SquareImage, TetrominoAssetMap, TetrominoAssetPlugin,
 };
 use crate::kbd::{self, get_pause_input, kbd_input, toggle_pause};
-use crate::arena::ClearRowDensities;
 use crate::tetroid::{
     components::*, spawn_tetromino, Tetromino, TetrominoBundle,
     TetrominoCollider, TetrominoColliderBundle, BRICK_DIM,
@@ -241,10 +241,6 @@ pub fn active_tetromino_collisions(
         }
     }
 }
-
-
-
-
 
 // Ok. So event readers can't be accessed from an observer.
 fn dbg_slice_rows(

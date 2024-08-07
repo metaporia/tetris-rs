@@ -181,9 +181,8 @@ pub fn load_block_assets(
             format!("assets/scaled/{:?}-square.png", block_type.as_idx());
         dbg!(&file_name);
         // TODO: add scaling here
-        let scaled = image::open(file_name).unwrap()
-            .resize_exact(
-            BRICK_DIM as u32 ,
+        let scaled = image::open(file_name).unwrap().resize_exact(
+            BRICK_DIM as u32,
             BRICK_DIM as u32,
             FilterType::Nearest,
         );

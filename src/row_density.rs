@@ -9,7 +9,6 @@ use crate::{
     schedule::InGameSet,
 };
 
-
 pub fn plugin(mut app: &mut App) {
     app.add_event::<RowDensity>()
         .add_event::<ClearRowDensities>()

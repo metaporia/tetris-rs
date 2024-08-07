@@ -1,4 +1,3 @@
-
 use crate::{ActiveTetromino, Pause, IMPULSE_SCALAR};
 use bevy::prelude::*;
 use bevy_rapier2d::dynamics::{
