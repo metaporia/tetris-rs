@@ -194,14 +194,19 @@ mod physics {
 mod graphics {
     //! Load TetrominoAssetPlugin, ShapePlugin
     use bevy::app::{App, Startup};
+    use bevy::color::Color;
+    use bevy::render::camera::ClearColor;
     use bevy_prototype_lyon::plugin::ShapePlugin;
 
     use crate::game::spawn_camera;
     use crate::image::TetrominoAssetPlugin;
 
     pub(super) fn plugin(app: &mut App) {
+        let bg_color = Color::linear_rgba(242.0, 238.0, 223.0, 1.0);
         app.add_plugins(TetrominoAssetPlugin)
             .add_plugins(ShapePlugin)
+            // set background color
+            .insert_resource(ClearColor(bg_color))
             .add_systems(Startup, spawn_camera);
     }
 }

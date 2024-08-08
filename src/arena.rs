@@ -29,6 +29,15 @@ pub enum Wall {
     Right,
 }
 
+impl Wall {
+    fn as_scalar(&self) -> f32 {
+        match self {
+            Wall::Left => -1.0,
+            Wall::Right => 1.0,
+        }
+    }
+}
+
 /// A `Vec<Enitity>` wrapper. The nth `Entity` represents the nth row's
 /// `DensityIndicatorSquare`. Should be initialized such that
 /// `RowDensityIndicatorMap.0 <= ROWS`.
@@ -99,7 +108,10 @@ pub fn render_row_density(
             match &mut text.sections[..] {
                 [] => text.sections.push(TextSection::new(
                     density_string,
-                    TextStyle::default(),
+                    TextStyle {
+                        color: Color::Srgba(Srgba::BLACK),
+                        ..Default::default()
+                    },
                 )),
                 [section] => section.value = density_string,
                 _ => {}
@@ -222,9 +234,7 @@ pub fn spawn_density_indicator_column(
                             path: GeometryBuilder::build_as(&square),
                             ..default()
                         },
-                        Fill::color(Color::Srgba(Srgba::new(
-                            0.0, 0.0, 0.0, 0.0,
-                        ))),
+                        Fill::color(Color::Srgba(Srgba::BLACK)),
                         Stroke::new(
                             Color::Srgba(Srgba::BLACK),
                             OUTLINE_THICKNESS,
@@ -303,67 +313,38 @@ pub fn spawn_arena(mut commands: Commands) {
         .insert(Ground);
 
     /* Create left wall */
-    let wall_shape = shapes::Rectangle {
-        extents: Vect {
-            x: BRICK_DIM - OUTLINE_THICKNESS,
-            y: BRICK_DIM * 19.0 - OUTLINE_THICKNESS,
-        },
-        ..Default::default()
-    };
-    commands
-        .spawn((
-            ShapeBundle {
-                path: GeometryBuilder::build_as(&wall_shape),
-                ..default()
-            },
-            Fill::color(Color::BLACK),
-            Stroke::new(Color::BLACK, OUTLINE_THICKNESS),
-        ))
-        .insert(Wall::Left)
-        .insert(WallPhysicsBundle::new())
-        .insert(TransformBundle::from(Transform::from_xyz(
-            -BRICK_DIM * 5.0 - brick_half,
-            -BRICK_DIM * 0.5,
-            0.0,
-        )));
+    commands.spawn(WallPhysicsBundle::new(Wall::Left));
+    commands.spawn(WallGraphicsBundle::new(Wall::Left));
 
-    // right wall
-    commands
-        .spawn((
-            ShapeBundle {
-                path: GeometryBuilder::build_as(&wall_shape),
-                ..default()
-            },
-            //Fill::color(Color::Srgba(Srgba::BLACK)),
-            Stroke::new(Color::Srgba(Srgba::BLACK), OUTLINE_THICKNESS),
-        ))
-        .insert(Wall::Right)
-        .insert(WallPhysicsBundle::new())
-        .insert(TransformBundle::from(Transform::from_xyz(
-            BRICK_DIM * 5.0 + brick_half,
-            -BRICK_DIM * 0.5,
-            0.0,
-        )));
+    // right wall:
+    commands.spawn(WallPhysicsBundle::new(Wall::Right));
+    commands.spawn(WallGraphicsBundle::new(Wall::Right));
 }
 
 #[derive(Bundle)]
-pub struct WallPhysicsBundle {
-    collider: Collider,
-    friction: Friction,
-    restitution: Restitution,
+struct WallGraphicsBundle {
+    shape_bundle: ShapeBundle,
+    fill: Fill,
+    stroke: Stroke,
 }
 
-impl WallPhysicsBundle {
-    pub fn new() -> Self {
-        WallPhysicsBundle {
-            collider: Collider::cuboid(BRICK_DIM / 2.0, BRICK_DIM * 9.5),
-            restitution: Restitution::coefficient(0.0),
-            friction: Friction {
-                coefficient: 0.0,
-                combine_rule: CoefficientCombineRule::Min,
+impl WallGraphicsBundle {
+    fn new(wall: Wall) -> Self {
+        WallGraphicsBundle {
+            shape_bundle: ShapeBundle {
+                path: GeometryBuilder::build_as(&Self::wall_shape()),
+                spatial: SpatialBundle::from_transform(Transform::from_xyz(
+                    wall.as_scalar() * BRICK_DIM * 5.0 + BRICK_DIM / 2.0,
+                    -BRICK_DIM * 0.5,
+                    0.0,
+                )),
+                ..Default::default()
             },
+            fill: Fill::color(Color::BLACK),
+            stroke: Stroke::new(Color::Srgba(Srgba::BLACK), OUTLINE_THICKNESS),
         }
     }
+
     fn wall_shape() -> shapes::Rectangle {
         shapes::Rectangle {
             extents: Vect {
@@ -371,6 +352,37 @@ impl WallPhysicsBundle {
                 y: BRICK_DIM * 19.0 - OUTLINE_THICKNESS,
             },
             ..Default::default()
+        }
+    }
+}
+
+#[derive(Bundle)]
+pub struct WallPhysicsBundle {
+    collider: Collider,
+    friction: Friction,
+    restitution: Restitution,
+    transform_bundle: TransformBundle,
+    wall: Wall,
+}
+
+impl WallPhysicsBundle {
+    /// the actual wall collider is taller than the visible wall so the
+    /// tetromino can't be moved out of bounds before it enters the screen
+    pub fn new(wall: Wall) -> Self {
+        WallPhysicsBundle {
+            //collider: Collider::cuboid(BRICK_DIM / 2.0, BRICK_DIM * 9.5),
+            collider: Collider::cuboid(BRICK_DIM / 2.0, BRICK_DIM * 11.5),
+            restitution: Restitution::coefficient(0.0),
+            friction: Friction {
+                coefficient: 0.0,
+                combine_rule: CoefficientCombineRule::Min,
+            },
+            transform_bundle: TransformBundle::from(Transform::from_xyz(
+                wall.as_scalar() * BRICK_DIM * 5.0 + BRICK_DIM / 2.0,
+                BRICK_DIM * 1.5,
+                0.0,
+            )),
+            wall,
         }
     }
 }
