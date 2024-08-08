@@ -1332,6 +1332,8 @@ fn spawn_hull_groups(
                                     slice_rows: slice_rows.clone(),
                                     x_bounds,
                                     y_bounds,
+                                    global_transform: collider_data
+                                        .global_transform,
                                 });
                             })
                             .id();
@@ -1397,16 +1399,6 @@ fn group_hulls(
     }
 
     groups
-}
-
-fn send_slice(
-    //mut slices: EventWriter<SliceRow>,
-    mut commands: Commands,
-    mut unfreeze: EventWriter<UnFreeze>,
-) {
-    commands.trigger(SliceRows { rows: vec![0, 1] });
-    // slices.send(SliceRow { row: 2 });
-    unfreeze.send(UnFreeze);
 }
 
 #[derive(Event, Debug, Eq, PartialEq, PartialOrd, Ord)]

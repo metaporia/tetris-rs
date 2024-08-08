@@ -437,6 +437,8 @@ pub struct SliceImage {
     /// The bounding y-coordinates of the sprite's parent collider in global
     /// space.`(lowest: f32, highest: f32)`
     pub y_bounds: (f32, f32),
+    /// The global transform of the old sprite bundle 
+    pub global_transform: GlobalTransform,
 }
 
 impl SliceImage {
@@ -467,7 +469,7 @@ pub fn apply_slice_image(
     mut slices: EventReader<SliceImage>,
     mut images: ResMut<Assets<Image>>,
     mut sprite: Query<
-        (Entity, &mut Handle<Image>, &GlobalTransform),
+        (Entity, &mut Handle<Image>),
         With<SquareImage>,
     >,
     mut cmds: Commands,
@@ -479,9 +481,10 @@ pub fn apply_slice_image(
         slice_rows,
         x_bounds,
         y_bounds,
+        global_transform
     } in slices.read()
     {
-        let Ok((entity, mut image_handle, global_transform)) =
+        let Ok((entity, mut image_handle)) =
             sprite.get(*sprite_id)
         else {
             error!(
