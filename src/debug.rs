@@ -1,5 +1,5 @@
 use crate::{
-    game::{FallSpeed, Freeze, SpawnNextTetromino, Tetroid},
+    game::{FallSpeed, Freeze, SliceRows, SpawnNextTetromino, Tetroid},
     tetroid::TetrominoCollider,
     ActiveTetromino,
 };
@@ -15,7 +15,7 @@ pub fn plugin(mut app: &mut App) {
             reset_game.run_if(input_just_pressed(KeyCode::KeyR)),
             reset_tetroids.run_if(input_just_pressed(KeyCode::KeyT)),
             reset_debug_shapes.run_if(input_just_pressed(KeyCode::KeyC)),
-            dbg_mass_props.run_if(input_just_pressed(KeyCode::Space)),
+            send_slice.run_if(input_just_pressed(KeyCode::Space)),
         )
             .run_if(in_state(PausedState::Playing)),
     );
@@ -105,4 +105,12 @@ fn reset_debug_shapes(
     //spawn_tetromino(cmds, images, fallspeed);
     cmds.trigger(SpawnNextTetromino);
     //next_tetroid.send(SpawnNextTetromino);
+}
+
+fn send_slice(
+    //mut slices: EventWriter<SliceRow>,
+    mut commands: Commands,
+) {
+    commands.trigger(SliceRows { rows: vec![0] });
+    // slices.send(SliceRow { row: 2 });
 }
