@@ -2,16 +2,6 @@
 //! `partitions`), and exposes a system set for the row density plugin to
 //! hook into.
 
-// FIXME::
-// - image slices are using an old transform.
-// - ok so the damping /does/ make it slightly worse. and it probaly has to
-//   due with transform updates. But in order to make it perfect we need to
-//   allow the colliders to rebound before freezing and slicing.
-//   we could add a state before Frozen, ie, Freezing, in which we remove
-//   all velocities but allow contact forces to remain for like two frames,
-//   and then move into Frozen and apply the slices.
-//
-
 use bevy::{app::App, ecs::schedule::SystemSet, prelude::*};
 use tetris_rs::PausedState;
 
@@ -23,6 +13,11 @@ use crate::{
     image::{apply_slice_image, SliceImage},
     schedule::InGameSet,
 };
+
+// FIXME: Not sure if it was just when manually slicing with `send_slice` but
+// there are cases where group_hulls is failing.
+// - To test we need to isolate a failing collider, and dump the collider
+//   points to see how `any_shared_points` is fucking up.
 
 /// Registers `row_intersections` and `partitions` in state
 /// `PausedState::Playing` under system set `SliceSet`.

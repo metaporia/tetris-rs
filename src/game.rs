@@ -72,7 +72,6 @@ pub struct Tetroid;
 #[derive(Event, Debug)]
 pub struct ActiveTetrominoHit;
 
-// FIXME: lower forces and velocity to match better length_unit
 pub const PIXELS_PER_METER: f32 = 50.0;
 pub const GRAVITY: f32 = 0.05;
 pub const VELOCITY: Velocity = Velocity {
@@ -574,10 +573,6 @@ pub fn apply_slices(
                             //dbg!(row, &rows_to_slice);
                             // push part if it doesn't have applicable slices
                             if !rows_to_slice.contains(&row) {
-                                // FIXME: will doing this inside the for-lop
-                                // over `parts` duplicate it? I'm not 100% sure
-                                // that each hull is unique in `Partitions`
-
                                 //let sprite_bundle = image_to_sprite_bundle(
                                 //    image.clone(),
                                 //    images.as_mut(),
@@ -959,7 +954,6 @@ pub fn partitions(
 
         let mut area = 0.0;
         let mut area_dbg = Vec::new();
-        // FIXME: duplicating `points` insertion. idk how
         let mut last: Vec<Vec2> = Vec::new();
         in_row.clone().into_iter().for_each(|(id, mut points)| {
             // initialize with collider points within row after appling global
@@ -1281,16 +1275,6 @@ fn spawn_hull_groups(
             .with_children(|children| {
                 colliders.into_iter().for_each(
                     |(collider_data, col, x_bounds, y_bounds)| {
-                        // FIXME:
-                        // - we need the old collider's transform, since the hull
-                        //   vertices we use are actually in global space, the
-                        //   sprite inherits its transform correctly, but then
-                        //   renders at the origin.
-                        //   - The fix: apply old collider transform to new points,
-                        //     create collider with old transform.
-                        // - we also need to figure out how to send `SliceImage`.
-                        //   Could we move it back to `apply_slices`?
-
                         //dbg!(&x_bounds);
                         //dbg!(&y_bounds);
                         let Some(x_bounds) = x_bounds else {
@@ -1431,7 +1415,6 @@ impl SliceRows {
         if lower.row > upper.row {
             dbg!(&lower, &upper);
         }
-        // FIXME: idx how but this panicked once
         assert!(lower.row <= upper.row);
         self.rows
             .iter()
@@ -1516,7 +1499,6 @@ pub fn row_intersections(
             let solid = true;
             let filter = QueryFilter::only_dynamic();
             // TODO: duplicate handling?
-            // FIXME: the bug hunt for dups starts here
             let mut on_hit = |entity: Entity, ri: RayIntersection| {
                 match hitmap.0.get_mut(&(entity, ray)) {
                     Some(hits) => hits.push(ri.point),

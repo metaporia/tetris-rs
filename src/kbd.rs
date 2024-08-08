@@ -63,8 +63,6 @@ pub fn kbd_input(
         return;
     };
 
-    // FIXME: these forces are way too high. I think the computed masses
-    // are too high.
     let force = 2000000.0;
     let torque = force * 15.0;
     let max_vel = 230.0;
@@ -76,8 +74,6 @@ pub fn kbd_input(
         ext_force.torque = torque;
         //velocity.angvel = -max_ang_vel;
     }
-    // FIXME: enable faster max angular velocity but with less momentum (reduce
-    // collider mass).
     //
     //
     // - put `ColliderMassProperties` on rigibbody
