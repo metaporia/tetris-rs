@@ -168,7 +168,6 @@ impl Plugin for TetrominoAssetPlugin {
 /// Demo: load png for I-block into `TetrominoAssetMwp`.
 ///
 /// Must be scheduled after `TetrominoAssetMap` initialization.
-/// TODO: write wn asset loading plugin for this
 pub fn load_block_assets(
     mut asset_map: ResMut<TetrominoAssetMap>,
     mut images: ResMut<Assets<Image>>,
@@ -180,7 +179,6 @@ pub fn load_block_assets(
         let file_name =
             format!("assets/scaled/{:?}-square.png", block_type.as_idx());
         dbg!(&file_name);
-        // TODO: add scaling here
         let scaled = image::open(file_name).unwrap().resize_exact(
             BRICK_DIM as u32,
             BRICK_DIM as u32,
@@ -392,8 +390,6 @@ impl RgbaPixel for &mut [u8] {
     }
 }
 
-// TODO: repllace with `Trigger<SliceImage>`
-//
 // manually edit resource on slice
 pub fn clear_below(
     trigger: Trigger<ClearBelow>,
@@ -409,7 +405,6 @@ pub fn clear_below(
     if let Ok((entity, mut image_handle, global_transform)) =
         square.get_single_mut()
     {
-        // NOTE: rounding from cast could be an issue
         dbg!(y_cutoff);
 
         if let Some(mut image) = images.remove(image_handle.as_mut()) {
@@ -451,20 +446,11 @@ impl SliceImage {
     }
 }
 
-/// NOTE: sensitive to schedule as the globaltransforms take a frame to update
+/// Slices image with row bounds and trims stray pixels (with contiguity check, I guess)
 ///
-/// TODO:
-/// - trim stray pixels (with contiguity check, I guess)
-///
-/// - Fix 1:
-///   - remove gravity and velocity, pause the game but not the physics
-///     (entirely), so overlapping colliders have a chance to rebound into
-///     non-overlapping contact, then freeze completely and apply SliceImages.
-///     (Or, rather, after a hit that will trigger a SliceRow, wait for
-///     rebound, and then apply SliceRows and SliceImages)
-///   - pass collider's left- and right-most x and lowest and higest y, and
-///     trim all pixels outside of the bounding box.
-///
+/// Trim logic:
+/// - pass collider's left- and right-most x and lowest and higest y, and trim
+///   all pixels outside of the bounding box.
 pub fn apply_slice_image(
     mut slices: EventReader<SliceImage>,
     mut images: ResMut<Assets<Image>>,

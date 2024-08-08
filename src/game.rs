@@ -138,7 +138,7 @@ pub fn app() {
         .add_sub_state::<GameState>()
         .add_systems(Update, log_transitions::<GameState>)
         .add_systems(Update, log_transitions::<AppState>);
-    //.observe(clear_row_densities) // TODO: is this necessary?
+    //.observe(clear_row_densities)
     //.observe(apply_slices)
     //.observe(rdeactivate_tetromino)
     //.observe(spawn_next_tetromino)
@@ -266,24 +266,9 @@ pub fn handle_active_tetromino_hit(
         active_tetromino_hit.clear();
         // triggers `rdeactivate_tetromino` observer
         info!("Attempting to deactivate tetromino");
-        commands.trigger(DeactivateTetromino);
-        // NOTE: deactivate tetromino will trigger `SpawnNextTetromino` so
+        // NB deactivate tetromino will trigger `SpawnNextTetromino` so
         // order is preserved.
-        //
-        // only spawn a new one if there is a single ActiveTetromino
-        //
-        //if active_tetrominos.iter().len() < 2 {
-        //    next_tetromino.send(SpawnNextTetromino);
-        //}
-        // TODO: check for row slices and freeze
-        // - Since SliceRows is a triggered event, idk that we can read it with
-        //   `EventReader<SliceRows>`
-        //if !slices.is_empty() {
-        //    error!("SliceReady inner");
-        //    slices.clear();
-        //    error!("Received ActiveTetrominoHit & SliceRows: Freezing");
-        //    freeze.send(Freeze);
-        //}
+        commands.trigger(DeactivateTetromino);
     }
 }
 
@@ -441,15 +426,6 @@ pub fn apply_slices(
     collider_children: Query<&Children, With<TetrominoCollider>>,
     mut slice_images: EventWriter<SliceImage>,
 ) {
-    // TODO:
-    // [x] get_rows_of
-    // [x] get children for each parent
-    // [x] for child:
-    //     if child in rows -> push remaining partitions
-    //     otherwise -> push transformed collider points
-    // [x] group_hulls(hulls)
-    // [x] send cleanup events
-
     //dbg!("{}", partitions.0.len());
 
     let slice_rows = trigger.event();
@@ -533,18 +509,11 @@ pub fn apply_slices(
                 if rows_to_slice.is_empty() {
                     // TODO: count children and remove image from Assets<Image> to
                     // avoid unnecessary cloning.
-                    //
-                    // TODO: in this case we could just remove the sprite
+                    // - in this case we could just remove the sprite
                     // bundle from it's old parent and pass along its id
                     // (that is, `sprite`).
                     // Then only below would we have to actually remove the
                     // image handle
-                    //
-                    // copy old image, no image slicing required as the
-                    // collider was not in a slice row
-                    //let sprite_bundle =
-                    //    image_to_sprite_bundle(image.clone(), images.as_mut());
-                    //let id = cmds.spawn(sprite_bundle).id();
                     let image_handle = images.add(image.clone());
 
                     let collider_data = ColliderData {
@@ -554,12 +523,7 @@ pub fn apply_slices(
                         global_transform: *global_transform,
                     };
                     //info!("child not in row, pushing as is");
-                    hulls.push((
-                        collider_data,
-                        vertices, //.into_iter()
-                                  //.map(|p| transform_point_to_local(transform, &p))
-                                  //.collect(),
-                    ));
+                    hulls.push((collider_data, vertices));
                 }
                 // otherwise, child has applicable slices, apply 'em
                 else {
@@ -573,35 +537,18 @@ pub fn apply_slices(
                             //dbg!(row, &rows_to_slice);
                             // push part if it doesn't have applicable slices
                             if !rows_to_slice.contains(&row) {
-                                //let sprite_bundle = image_to_sprite_bundle(
-                                //    image.clone(),
-                                //    images.as_mut(),
-                                //);
-                                //let sprite_id = cmds.spawn(sprite_bundle).id();
                                 let image_handle = images.add(image.clone());
-
-                                //slice_images.send(SliceImage {
-                                //    image_handle,
-                                //    rows_to_slice: rows_to_slice
-                                //        .clone()
-                                //        .into_iter()
-                                //        .cloned()
-                                //        .collect(),
-                                //});
 
                                 // TODO: we should be able to just remove the
                                 // partition entry to avoid the clone
-                                //
+
                                 let collider_data = ColliderData {
                                     id: child,
                                     image_handle,
                                     transform: *transform,
                                     global_transform: *global_transform,
                                 };
-                                hulls.push((
-                                    collider_data,
-                                    part.clone(), //iter() .cloned() .map(|p| { transform_point_to_local( transform, &p,) }) .collect(),
-                                ));
+                                hulls.push((collider_data, part.clone()));
                                 //info!("pushing part");
                             }
                             // partition is sliced, so discard it. Likewise
@@ -629,8 +576,6 @@ pub fn apply_slices(
             // despawn parent tetromino
             if let Some(mut parent_cmds) = cmds.get_entity(t) {
                 //info!("Despawing Tetromino: parent id = {:?}", &parent);
-                //parent_cmds.despawn_descendants();
-                //parent_cmds.despawn()
                 info!("Event: DespawnTetromino({:?})", &t);
                 despawn.send(DespawnTetromino(t));
             } else {
@@ -1025,131 +970,6 @@ pub fn partitions(
         let rd = RowDensity { row, density };
         densities.send(rd);
     }
-
-    // NOTE: so bloody inelegant but this is a prototype after all:
-    // - with a single loop, the partition table didn't get built up completely
-    //   before trying to execute the `SliceRow`s
-    // - TODO: Consider collecting a `parents_in_row: Vec<(Entity, Vec<Row>)`
-    //   and then appling the slice per parent, allowing for proper application
-    //   multiple `SliceRow`s to a single `Tetromino`/parent. As a bonus it
-    //   would be faster.
-
-    //if freeze.is_empty() {
-    //    return;
-    //}
-    //freeze.clear();
-    //for row in 0..ROWS {
-    //    // Slice logic: Triggers if there is a `SliceRow` AND a `Freeze`, as we
-    //    // only want to slice on ground contact.
-    //    if rows_to_slice.contains(&row) {
-    //        freeze.clear();
-    //
-    //        let in_row = colliders_in_row(row, colliders.iter());
-    //        let parents_in_row: Vec<Entity> = in_row
-    //            .iter()
-    //            .flat_map(|(child, _)| parents.iter_ancestors(*child))
-    //            .sorted()
-    //            .dedup()
-    //            .collect();
-    //
-    //        let hull_to_collider =
-    //            |hull: &ConvexHull| Collider::convex_hull(hull).unwrap();
-    //
-    //        // for each parent, get children, lookup (child_id, row) in
-    //        // partitions and collect ConvexHulls
-    //        // - colliders are new and should be spawned under a rigidbody
-    //        for parent in parents_in_row {
-    //            let mut hulls = vec![];
-    //
-    //            for child in children.iter_descendants(parent) {
-    //                // - if child collider is in row, fetch slices from
-    //                //   `.Partition`,` and add to`.`.hulls```
-    //                // - otherwise,`.leave `apply global transform and add to
-    //                //   `hulls`
-    //
-    //                if let Some(entries) = partitions.0.get(&child) {
-    //                    // if child is in row, use partitions, otherwise, fetch
-    //                    // existing colliders
-    //                    let is_child_in_row =
-    //                        in_row.iter().map(|(id, _)| id).contains(&child);
-    //
-    //                    let rows = entries
-    //                        .iter()
-    //                        .map(|(r, _)| r)
-    //                        .collect::<Vec<&u8>>();
-    //
-    //                    entries.iter().for_each(|(collider_row, hull)| {
-    //                        if is_child_in_row {
-    //                            match Ord::cmp(&row, collider_row) {
-    //                                Ordering::Equal => {}
-    //                                _ => {
-    //                                    hulls.push(hull.clone());
-    //                                }
-    //                            }
-    //                        } else if let Ok((_, col, transform)) =
-    //                            colliders.get(child)
-    //                        {
-    //                            let view = col.as_convex_polygon().unwrap();
-    //                            let global_points: Vec<Vec2> = view
-    //                                .points()
-    //                                .map(|p| transform_point(transform)(&p))
-    //                                .collect();
-    //
-    //                            match Ord::cmp(&row, collider_row) {
-    //                                Ordering::Equal => {}
-    //                                _ => {
-    //                                    hulls.push(global_points);
-    //                                }
-    //                            }
-    //                        }
-    //                    });
-    //                }
-    //            }
-    //
-    //            // With `spawn_hull_groups` working, can we not just collect
-    //            // all the new hulls into a single `Vec` and pass it to
-    //            // `spawn_hull_groups`
-    //            //
-    //            // This shit works.
-    //            spawn_hull_groups(cmds.reborrow(), hulls);
-    //
-    //            // FIXME somehow this is running multiple times and causing
-    //            // panics. I'm pretty sure it panics when multiple rows that each
-    //            // cantain the same parent are sliced. The first slice despawns
-    //            // the parent, the second somehow manages to get through the
-    //            // above logic (which needs the parent i'm pretty sure), and
-    //            // then goes and tries to despawn it again and, voilà, we have
-    //            // a panic.
-    //            // - Handle despawn in separate system scheduled after
-    //            // `partitions`, and deduplicate `DespawnTetromino` events?
-    //            //
-    //            //
-    //            // despawn parent
-    //            if let Some(mut parent_cmds) = cmds.get_entity(parent) {
-    //                //info!("Despawing Tetromino: parent id = {:?}", &parent);
-    //                //parent_cmds.despawn_descendants();
-    //                //parent_cmds.despawn()
-    //                info!("Event: DespawnTetromino({:?})", &parent);
-    //                despawn.send(DespawnTetromino(parent));
-    //            } else {
-    //                warn!("No Tetromino parent to despawn: id = {:?}", parent);
-    //            };
-    //
-    //            //}
-    //        }
-    //
-    //        // done slicing, so wipe row densities
-    //        cmds.trigger(ClearRowDensities);
-    //
-    //        // TODO:
-    //        // [ ] sort out event order for spawning blocks (relying on
-    //        //     hacky freeze trigger)--it seems to hang after only triggered
-    //        //     `SliceRow`s
-    //        // [ ] replace spawn_lblock with spawn_random_block
-    //        // [ ] try to load in mesh
-    //        //
-    //        //spawn_lblock(cmds.reborrow());
-    //    }
 }
 
 pub fn despawn_tetrominos(
@@ -1161,20 +981,8 @@ pub fn despawn_tetrominos(
         .sorted()
         .dedup()
         .for_each(|&DespawnTetromino(id)| {
-            // NOTE: for some reason this bugged the fuck out when used with
-            // the `if let ... cmds.get_entity`. The only other change made was
-            // adding a `!freeze.is_empty()` guard to `check_row_densities`
-            // before sending `SliceRow` events. Probably that right?
-
-            //if let Some(mut parent_cmds) = cmds.get_entity(id) {
             //info!("Despawning Tetromino: id = {:?}", &id);
             cmds.entity(id).despawn_recursive();
-            //} else {
-            //    warn!(
-            //        "Attempted to despawn non-existent Tetromino: id = {:?}",
-            //        id
-            //    );
-            //};
         });
     despawn.clear();
 }
@@ -1249,16 +1057,6 @@ fn spawn_hull_groups(
                 None
             }
         });
-
-        // TODO:
-        //slice_images.send(SliceImage {
-        //    image_handle,
-        //    rows_to_slice: rows_to_slice
-        //        .clone()
-        //        .into_iter()
-        //        .cloned()
-        //        .collect(),
-        //});
 
         let colliders: Vec<(
             ColliderData,
@@ -1498,7 +1296,6 @@ pub fn row_intersections(
             let max_toi = 500.0;
             let solid = true;
             let filter = QueryFilter::only_dynamic();
-            // TODO: duplicate handling?
             let mut on_hit = |entity: Entity, ri: RayIntersection| {
                 match hitmap.0.get_mut(&(entity, ray)) {
                     Some(hits) => hits.push(ri.point),

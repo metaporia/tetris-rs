@@ -66,14 +66,6 @@ pub(crate) struct RowDensity {
 pub(crate) struct RowDensityText;
 
 /// Update row density indicator column based on latest row densities.
-/// TODO:
-/// - add `RowDensity` events
-/// - add `density_map_manager` to read `RowDensity` events and update the map
-///   from row -> density
-/// - fire `RowDensity` events at the end of the `partition` pipeline
-/// NOTE: Add `Row` to indicator map? No the index works, right?
-/// - And then we read `RowDensity(Row, Density)` events and apply each,
-/// indexing `density_map` accordingly.
 pub fn render_row_density(
     density_map: ResMut<RowDensityIndicatorMap>,
     mut squares: Query<(&mut Fill, &Children), With<DensityIndicatorSquare>>,
@@ -181,7 +173,7 @@ pub fn check_row_densities(
         return;
     }
     active_hits.clear();
-    // TODO: we trigger `Freeze`, we don't get triggered *by* it.
+    //  we trigger `GameState::Frozen`, we don't get triggered *by* it.
     let rows = densities.read().filter_map(|rd| {
         if rd.density >= ROW_DENSITY_THRESHOLD {
             Some(rd.row)
